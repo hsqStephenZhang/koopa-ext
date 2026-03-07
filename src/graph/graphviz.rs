@@ -79,6 +79,23 @@ pub fn graphviz(func_data: &FunctionData, no_body: bool) -> String {
     dot
 }
 
+/// The function `graphviz_cfg` generates a Graphviz representation of the control flow graph for a
+/// given function.
+///
+/// Arguments:
+///
+/// * `func_data`: It looks like you are trying to create a Control Flow Graph using Graphviz for a
+/// given function. To complete the function `graphviz_cfg`, you can use the `FunctionData` parameter to
+/// generate the necessary graph representation.
+///
+/// Returns:
+///
+/// The `graphviz_cfg` function is returning a `String` value, which is the result of calling the
+/// `graphviz` function with the `func_data` parameter and `true` as the second argument.
+pub fn graphviz_cfg(func_data: &FunctionData) -> String {
+    graphviz(func_data, true)
+}
+
 /// A displayable helper for [`ValueKind`].
 pub struct ValueKindDisplay<'a> {
     pub kind: &'a ValueKind,
