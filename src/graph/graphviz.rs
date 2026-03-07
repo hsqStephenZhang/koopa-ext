@@ -5,7 +5,26 @@ use koopa::ir::{BasicBlock, FunctionData, Value, ValueKind};
 
 use crate::graph::graph::Successors;
 
-pub fn graphviz(func_data: &FunctionData) -> String {
+/// The `graphviz` function in Rust generates a Graphviz representation of a function's control flow
+/// graph with optional instruction details.
+///
+/// Arguments:
+///
+/// * `func_data`: The `func_data` parameter is a reference to `FunctionData`, which is used to gather
+/// information about a function such as basic block layout, data flow graph, and successors. This
+/// function `graphviz` generates a Graphviz representation of the function control flow graph based on
+/// the provided `func_data
+/// * `no_body`: The `no_body` parameter is a boolean flag that determines whether to include the body
+/// of each basic block in the graph visualization. If `no_body` is set to `true`, the graph will only
+/// display the basic block names and parameters without showing the instructions inside each block. If
+/// set to `
+///
+/// Returns:
+///
+/// The function `graphviz` returns a `String` containing the DOT representation of a graph for the
+/// given `FunctionData`. The graph represents the control flow of the function, including basic blocks,
+/// instructions, and their connections.
+pub fn graphviz(func_data: &FunctionData, no_body: bool) -> String {
     let mut dot = String::from("digraph G {\n");
     dot.push_str("  node [shape=record];\n");
 
@@ -32,18 +51,21 @@ pub fn graphviz(func_data: &FunctionData) -> String {
 
         let mut label = format!("{{ {}{} | ", name, params);
 
-        for inst in func_data.layout().bbs().node(bb).unwrap().insts() {
-            let data = func_data.dfg().value(*inst.0);
-            if !data.ty().is_unit() {
-                if let Some(name) = data.name() {
-                    label.push_str(&format!("{} = ", name));
-                } else {
-                    label.push_str(&format!("%{:?} = ", inst.0));
+        if !no_body {
+            for inst in func_data.layout().bbs().node(bb).unwrap().insts() {
+                let data = func_data.dfg().value(*inst.0);
+                if !data.ty().is_unit() {
+                    if let Some(name) = data.name() {
+                        label.push_str(&format!("{} = ", name));
+                    } else {
+                        label.push_str(&format!("%{:?} = ", inst.0));
+                    }
                 }
+                let display = ValueKindDisplay { kind: data.kind(), dfg: func_data.dfg() };
+                label.push_str(&format!("{} \\l", display));
             }
-            let display = ValueKindDisplay { kind: data.kind(), dfg: func_data.dfg() };
-            label.push_str(&format!("{} \\l", display));
         }
+
         label.push_str(" }");
 
         dot.push_str(&format!("  \"bb_{:?}\" [label=\"{}\"];\n", bb, label));
@@ -222,7 +244,7 @@ fun @test(): i32 {
         let driver: Driver<_> = src.into();
         let prog = driver.generate_program().unwrap();
         let func = prog.funcs().values().next().unwrap();
-        let dot = graphviz(func);
+        let dot = graphviz(func, true);
         println!("{}", dot);
         assert!(dot.contains("digraph G"));
         assert!(dot.contains("bb_"));
@@ -268,7 +290,7 @@ fun @test(): i32 {
         let prog = driver.generate_program().unwrap();
         let func = prog.funcs().values().find(|bb| bb.name() == "@test").unwrap();
 
-        let viz = graphviz(func);
+        let viz = graphviz(func, false);
 
         println!("{}", viz);
     }
