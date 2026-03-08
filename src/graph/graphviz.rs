@@ -43,7 +43,7 @@ pub fn graphviz(func_data: &FunctionData, no_body: bool) -> String {
                 if let Some(p_name) = p_data.name() {
                     params.push_str(p_name);
                 } else {
-                    params.push_str(&format!("%{:?}", p));
+                    params.push_str(&format!("%{:x?}", p));
                 }
             }
             params.push(')');
@@ -58,7 +58,7 @@ pub fn graphviz(func_data: &FunctionData, no_body: bool) -> String {
                     if let Some(name) = data.name() {
                         label.push_str(&format!("{} = ", name));
                     } else {
-                        label.push_str(&format!("%{:?} = ", inst.0));
+                        label.push_str(&format!("%{:x?} = ", inst.0));
                     }
                 }
                 let display = ValueKindDisplay { kind: data.kind(), dfg: func_data.dfg() };
@@ -207,7 +207,7 @@ impl ValueKindDisplay<'_> {
         } else {
             match data.name() {
                 Some(name) => f.write_str(name),
-                None => write!(f, "%{:?}", value),
+                None => write!(f, "%{:x?}", value),
             }
         }
     }
