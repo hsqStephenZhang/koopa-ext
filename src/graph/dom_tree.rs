@@ -1,11 +1,13 @@
 use std::collections::HashMap;
 use std::hash::Hash;
 
+use indexmap::IndexMap;
+
 use crate::graph::graph::{DirectedGraph, Graph};
 use crate::graph::traverse::reverse_post_order;
 
 pub struct DomTree<N> {
-    idoms: HashMap<N, N>,
+    idoms: IndexMap<N, N>,
 }
 
 impl<N: PartialEq + Eq + Hash + Copy> DomTree<N> {
@@ -17,7 +19,7 @@ impl<N: PartialEq + Eq + Hash + Copy> DomTree<N> {
         let rpo = reverse_post_order(graph, entry_node);
         let bb_to_rpo =
             rpo.iter().enumerate().map(|(num, bb)| (*bb, num)).collect::<HashMap<_, _>>();
-        let mut idoms = HashMap::with_capacity(graph.num_nodes());
+        let mut idoms = IndexMap::with_capacity(graph.num_nodes());
 
         idoms.insert(entry_node, entry_node);
 
@@ -124,7 +126,7 @@ fn nearest_common_ancester<N: PartialEq + Eq + Hash + Copy>(
     mut pred1: N,
     mut pred2: N,
     bb_to_rpo: &HashMap<N, usize>,
-    partial_idoms: &HashMap<N, N>,
+    partial_idoms: &IndexMap<N, N>,
 ) -> N {
     assert!(partial_idoms.get(&pred1).is_some());
     assert!(partial_idoms.get(&pred2).is_some());
