@@ -6,3 +6,7 @@ edition = "2024"
 [dependencies]
 koopa = "0.0.9"
 smallvec = "1.15.1"
+
+[dev-dependencies]
+petgraph = "0.8.3"
+rand = "0.10"

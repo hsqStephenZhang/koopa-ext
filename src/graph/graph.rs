@@ -48,6 +48,8 @@ impl Successors for koopa::ir::FunctionData {
 
 pub trait Graph: Successors + Predecessors {}
 
+impl<T> Graph for T where T: Successors + Predecessors {}
+
 #[cfg(test)]
 mod tests {
     use koopa::front::Driver;
