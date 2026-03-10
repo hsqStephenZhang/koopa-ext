@@ -3,8 +3,8 @@ use std::hash::Hash;
 
 use indexmap::IndexMap;
 
-use crate::graph::graph::{DirectedGraph, Graph};
 use crate::graph::traverse::reverse_post_order;
+use crate::graph::{DirectedGraph, Graph};
 
 /// A dominator tree for a directed graph.
 ///
@@ -169,7 +169,7 @@ mod tests {
     use petgraph::graph::{DiGraph, NodeIndex};
 
     use crate::graph::dom_tree::DomTree;
-    use crate::graph::graph::*;
+    use crate::graph::*;
 
     impl<V, E> DirectedGraph for DiGraph<V, E> {
         type Node = NodeIndex;

@@ -3,7 +3,7 @@ use std::fmt;
 use koopa::ir::dfg::DataFlowGraph;
 use koopa::ir::{BasicBlock, FunctionData, Value, ValueKind};
 
-use crate::graph::graph::Successors;
+use crate::graph::Successors;
 
 /// The `graphviz` function in Rust generates a Graphviz representation of a function's control flow
 /// graph with optional instruction details.
@@ -179,7 +179,7 @@ impl fmt::Display for ValueKindDisplay<'_> {
             ValueKind::Call(v) => {
                 // we cannot access the actual function name here
                 // unless we have the callgraph
-                write!(f, "call {}(", "...")?;
+                write!(f, "call ...(")?;
                 for (i, arg) in v.args().iter().enumerate() {
                     if i != 0 {
                         f.write_str(", ")?;

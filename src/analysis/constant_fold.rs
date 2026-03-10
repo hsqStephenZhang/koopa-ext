@@ -81,6 +81,12 @@ impl FunctionPass for ConstantFolding {
     }
 }
 
+impl Default for ConstantFolding {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ConstantFolding {
     pub fn new() -> Self {
         Self
@@ -90,7 +96,7 @@ impl ConstantFolding {
         // find all evaluable binary instructions and evaluate
         let mut states: HashMap<Value, FlattenValue<ValueKind>> =
             HashMap::with_capacity(data.dfg().values().len());
-        for (&v, _) in data.dfg().values() {
+        for &v in data.dfg().values().keys() {
             states.insert(v, FlattenValue::Bottom);
         }
 

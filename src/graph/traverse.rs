@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use crate::graph::graph::{DirectedGraph, Successors};
+use crate::graph::{DirectedGraph, Successors};
 
 /// Computes the reverse post-order (RPO) of a directed graph starting from a given node.
 ///

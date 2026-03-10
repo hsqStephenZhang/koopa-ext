@@ -34,7 +34,7 @@ impl<V: PartialEq> JoinSemiLattice for FlattenValue<V> {
                         true
                     }
                     FlattenValue::Concrete(v2) => {
-                        if (*v1 == v2) {
+                        if *v1 == v2 {
                             false
                         } else {
                             *v1 = v2;
