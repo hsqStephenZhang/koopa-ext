@@ -1,7 +1,6 @@
 /// ∨ oepration to compute the least upper bound
 /// of two elements in a partial order
 pub trait JoinSemiLattice {
-    /// compute the
     /// returns if self is changed
     fn join(&mut self, other: Self) -> bool;
 }
@@ -17,17 +16,33 @@ pub enum FlattenValue<V> {
     Bottom,
 }
 
-impl<V> JoinSemiLattice for FlattenValue<V> {
+impl<V> FlattenValue<V> {
+    pub fn get(&self) -> Option<&V> {
+        if let Self::Concrete(v) = self { Some(v) } else { None }
+    }
+}
+
+impl<V: PartialEq> JoinSemiLattice for FlattenValue<V> {
     fn join(&mut self, other: Self) -> bool {
         match self {
             FlattenValue::Top => false,
-            FlattenValue::Concrete(_) => {
+            FlattenValue::Concrete(v1) => {
                 // if other is concret or top, the result of join must be Top
-                let changed = !matches!(other, Self::Bottom);
-                if changed {
-                    *self = Self::Top;
+                match other {
+                    FlattenValue::Top => {
+                        *self = FlattenValue::Top;
+                        true
+                    }
+                    FlattenValue::Concrete(v2) => {
+                        if (*v1 == v2) {
+                            false
+                        } else {
+                            *v1 = v2;
+                            true
+                        }
+                    }
+                    FlattenValue::Bottom => false,
                 }
-                changed
             }
             FlattenValue::Bottom => {
                 // if other is not bottom, then we must change
@@ -83,3 +98,5 @@ pub struct DeadcodeElimination {}
 //         todo!()
 //     }
 // }
+
+pub mod constant_fold;

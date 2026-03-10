@@ -6,15 +6,21 @@ use indexmap::IndexMap;
 use crate::graph::graph::{DirectedGraph, Graph};
 use crate::graph::traverse::reverse_post_order;
 
+/// A dominator tree for a directed graph.
+///
+/// The dominator tree represents the immediate dominator relationships
+/// in a directed graph. A node `a` dominates node `b` if every path
+/// from the entry node to `b` must go through `a`.
+///
+/// # Type Parameters
+/// - `N`: The type of nodes in the graph (must implement `PartialEq`, `Eq`, `Hash`, and `Copy`)
+/// ```
 pub struct DomTree<N> {
+    root: N,
     idoms: IndexMap<N, N>,
 }
 
 impl<N: PartialEq + Eq + Hash + Copy> DomTree<N> {
-    /// Cooper-Harvey-Kennedy algorithm
-    /// we need:
-    ///     1. entry node
-    ///     2. reverse post ordering of BBs
     pub fn build<G: DirectedGraph<Node = N> + Graph>(entry_node: N, graph: &G) -> Self {
         let rpo = reverse_post_order(graph, entry_node);
         let bb_to_rpo =
@@ -28,8 +34,10 @@ impl<N: PartialEq + Eq + Hash + Copy> DomTree<N> {
         while changed {
             changed = false;
 
+            // in naive algorithm(dataflow approach),
             // dom(bb) is the intersection of doms(pred) forall pred ∈ preds(bb)
-            // idom(bb) is the neartest common ancester of pred forall pred ∈ preds(bb)
+            // Cooper-Harvey-Kennedy algorithm
+            // our idom(bb) is the neartest common ancester of pred forall pred ∈ preds(bb)
             for bb in rpo.iter().filter(|&&bb| bb != entry_node) {
                 let old_idom = idoms.get(bb).cloned();
                 let mut new_idom = None;
@@ -55,7 +63,11 @@ impl<N: PartialEq + Eq + Hash + Copy> DomTree<N> {
             }
         }
 
-        Self { idoms }
+        Self { idoms, root: entry_node }
+    }
+
+    pub fn root(&self) -> &N {
+        &self.root
     }
 
     pub fn dominates(&self, a: N, mut b: N) -> bool {
@@ -83,7 +95,7 @@ impl<N: PartialEq + Eq + Hash + Copy> DomTree<N> {
     }
 
     /// returns the strict dominators of the node
-    /// if node has no strict dominator, it will return None
+    /// will return None if node has no strict dominator
     pub fn strict_dominators(&self, node: N) -> Option<IdomIterator<'_, N>> {
         let idom = self.idom(node);
         if idom != Some(node) {
@@ -93,13 +105,13 @@ impl<N: PartialEq + Eq + Hash + Copy> DomTree<N> {
         }
     }
 
-    /// returns the iterator of dominators
-    /// of the given node, including itself
+    /// Returns an iterator over all dominators of the node, including the node itself.
     pub fn dominators(&self, node: N) -> IdomIterator<'_, N> {
         IdomIterator { next: Some(node), dom_tree: self }
     }
 }
 
+/// An iterator over nodes in the dominator tree, moving upwards towards the root.
 pub struct IdomIterator<'t, N> {
     next: Option<N>,
     dom_tree: &'t DomTree<N>,

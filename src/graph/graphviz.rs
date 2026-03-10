@@ -178,6 +178,7 @@ impl fmt::Display for ValueKindDisplay<'_> {
             }
             ValueKind::Call(v) => {
                 // we cannot access the actual function name here
+                // unless we have the callgraph
                 write!(f, "call {}(", "...")?;
                 for (i, arg) in v.args().iter().enumerate() {
                     if i != 0 {
