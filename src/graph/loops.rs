@@ -98,10 +98,14 @@ impl<N: PartialEq + Eq + Hash + Copy + Debug> LoopsAnalysis<N> {
                         //  1. it's the current loop. we have already visited it and tag the loop num for it.
                         //  2. it's a subloop. we must skip the body of the subloop by jumping to it's header
 
-                        // sub_loop and cur_loop might have many middle layers
-                        // sub -> mid1 -> mid2 ... -> mid_last -> cur
-                        // where sub, mid1, mid2's parent has already been set
-                        // we wish to jump to header of mid_last
+                        // if we have three loops l1 <- l2 <- l3
+                        // l2 and l3 has already been handled
+                        // then l3's parent is set, but l2's parent is not
+                        // when we are handling l1
+                        // we might encounter a latch that belongs to l3
+                        // but we must start from l2's header and set l2's parent index
+                        // 
+                        // so we must find the first subloop whose parent idnex is still unset
                         while let Some(p) = self.loops.get(&subloop_num).unwrap().parent {
                             if p == cur_loop_num {
                                 break;
