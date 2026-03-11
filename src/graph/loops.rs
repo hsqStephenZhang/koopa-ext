@@ -1,34 +1,54 @@
 use std::collections::{BTreeMap, HashMap};
-use std::fmt::Debug;
+use std::fmt::{Debug, Display};
 use std::hash::Hash;
 
 use crate::graph::dom_tree::DomTree;
 use crate::graph::traverse::reverse_post_order;
 use crate::graph::{DirectedGraph, Graph};
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct Loop(u32);
+
+impl Loop {
+    pub fn new(index: u32) -> Self {
+        Loop(index)
+    }
+
+    #[inline]
+    pub fn index(self) -> usize {
+        self.0 as usize
+    }
+}
+
+impl Display for Loop {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_fmt(core::format_args!(concat!("loop", "{}"), self.0))
+    }
+}
+
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
 pub struct LoopData<N> {
     /// header of the loop
     header: N,
     /// it's parent loop
-    parent: Option<usize>,
+    parent: Option<Loop>,
     /// level of the loop
     level: usize,
 }
 
 impl<N> LoopData<N> {
-    pub fn new(header: N, parent: Option<usize>) -> Self {
+    pub fn new(header: N, parent: Option<Loop>) -> Self {
         Self { header, parent, level: 1 }
     }
 }
 
 pub struct LoopsAnalysis<N> {
     /// from loop's id to it's actual data
-    loops: BTreeMap<usize, LoopData<N>>,
+    loops: BTreeMap<Loop, LoopData<N>>,
     /// basic block to the inner most loop
-    bb_to_loop: HashMap<N, usize>,
+    bb_to_loop: HashMap<N, Loop>,
 
-    next_loop_id: usize,
+    next_loop_id: u32,
 }
 
 impl<N: PartialEq + Eq + Hash + Copy + Debug> LoopsAnalysis<N> {
@@ -36,17 +56,17 @@ impl<N: PartialEq + Eq + Hash + Copy + Debug> LoopsAnalysis<N> {
         Self { loops: Default::default(), bb_to_loop: Default::default(), next_loop_id: 0 }
     }
 
-    fn next_id(&mut self) -> usize {
+    fn next_id(&mut self) -> Loop {
         let id = self.next_loop_id;
         self.next_loop_id += 1;
-        id
+        Loop::new(id)
     }
 
-    pub fn loops(&self) -> &BTreeMap<usize, LoopData<N>> {
+    pub fn loops(&self) -> &BTreeMap<Loop, LoopData<N>> {
         &self.loops
     }
 
-    pub fn bb_to_loop(&self) -> &HashMap<N, usize> {
+    pub fn bb_to_loop(&self) -> &HashMap<N, Loop> {
         &self.bb_to_loop
     }
 
@@ -146,6 +166,24 @@ impl<N: PartialEq + Eq + Hash + Copy + Debug> LoopsAnalysis<N> {
         }
     }
 
+    /// returns if the loop contains a given node
+    pub fn contains(&self, lp: Loop, node: N) -> bool {
+        let Some(mut target_lp) = self.bb_to_loop.get(&node).copied() else {
+            return false;
+        };
+        while let Some(loop_data) = self.loops.get(&lp) {
+            if target_lp == lp {
+                return true;
+            }
+            if let Some(parent) = loop_data.parent {
+                target_lp = parent;
+            } else {
+                break;
+            }
+        }
+        return false;
+    }
+
     /// definition of loop header(BB):
     ///     BB dominates one of its predecessors
     fn is_loop_header<G: DirectedGraph<Node = N> + Graph>(
@@ -189,14 +227,14 @@ mod tests {
         assert_eq!(loops.len(), 1, "There should be exactly 1 loop");
 
         // 2. Check loop properties
-        let loop_0 = loops.get(&0).unwrap();
+        let loop_0 = loops.get(&Loop(0)).unwrap();
         assert_eq!(loop_0.header, header);
         assert_eq!(loop_0.parent, None, "Top level loop should have no parent");
         assert_eq!(loop_0.level, 1);
 
         // 3. Check BB mapping
-        assert_eq!(bb_to_loop.get(&header), Some(&0));
-        assert_eq!(bb_to_loop.get(&body), Some(&0));
+        assert_eq!(bb_to_loop.get(&header), Some(&Loop(0)));
+        assert_eq!(bb_to_loop.get(&body), Some(&Loop(0)));
         assert_eq!(bb_to_loop.get(&entry), None, "Entry is not in a loop");
         assert_eq!(bb_to_loop.get(&exit), None, "Exit is not in a loop");
     }
