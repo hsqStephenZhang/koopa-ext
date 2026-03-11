@@ -104,7 +104,7 @@ impl<N: PartialEq + Eq + Hash + Copy + Debug> LoopsAnalysis<N> {
                         // when we are handling l1
                         // we might encounter a latch that belongs to l3
                         // but we must start from l2's header and set l2's parent index
-                        // 
+                        //
                         // so we must find the first subloop whose parent idnex is still unset
                         while let Some(p) = self.loops.get(&subloop_num).unwrap().parent {
                             if p == cur_loop_num {
@@ -162,6 +162,7 @@ mod tests {
     use petgraph::graph::DiGraph;
 
     use super::*;
+    // Assuming DomTree is in crate::graph::dom_tree
     use crate::graph::dom_tree::DomTree;
 
     #[test]
@@ -180,11 +181,24 @@ mod tests {
         let dom_tree = DomTree::build(entry, &g);
         let mut analysis = LoopsAnalysis::new();
         analysis.compute(&g, entry, &dom_tree);
+
         let loops = analysis.loops();
-        for (id, loopdata) in loops {
-            println!("{id} -> {:?}, {}", loopdata.parent, loopdata.header.index());
-        }
-        dbg!(analysis.bb_to_loop());
+        let bb_to_loop = analysis.bb_to_loop();
+
+        // 1. Check loop count
+        assert_eq!(loops.len(), 1, "There should be exactly 1 loop");
+
+        // 2. Check loop properties
+        let loop_0 = loops.get(&0).unwrap();
+        assert_eq!(loop_0.header, header);
+        assert_eq!(loop_0.parent, None, "Top level loop should have no parent");
+        assert_eq!(loop_0.level, 1);
+
+        // 3. Check BB mapping
+        assert_eq!(bb_to_loop.get(&header), Some(&0));
+        assert_eq!(bb_to_loop.get(&body), Some(&0));
+        assert_eq!(bb_to_loop.get(&entry), None, "Entry is not in a loop");
+        assert_eq!(bb_to_loop.get(&exit), None, "Exit is not in a loop");
     }
 
     #[test]
@@ -198,23 +212,40 @@ mod tests {
 
         g.add_edge(entry, outer_header, ());
         g.add_edge(outer_header, inner_header, ());
-
-        // Inner loop
         g.add_edge(inner_header, inner_latch, ());
         g.add_edge(inner_latch, inner_header, ()); // Inner backedge
-
-        // Return to outer loop
         g.add_edge(inner_latch, outer_latch, ());
         g.add_edge(outer_latch, outer_header, ()); // Outer backedge
 
         let dom_tree = DomTree::build(entry, &g);
         let mut analysis = LoopsAnalysis::new();
         analysis.compute(&g, entry, &dom_tree);
+
         let loops = analysis.loops();
-        for (id, loopdata) in loops {
-            println!("{id} -> {:?}, {}", loopdata.parent, loopdata.header.index());
-        }
-        dbg!(analysis.bb_to_loop());
+        let bb_to_loop = analysis.bb_to_loop();
+
+        assert_eq!(loops.len(), 2);
+
+        // Because of Reverse Post Order, the outer loop is typically discovered first (ID 0)
+        // and the inner loop is discovered second (ID 1).
+        // Let's find IDs dynamically to make the test less fragile.
+        let outer_id = loops.iter().find(|(_, data)| data.header == outer_header).unwrap().0;
+        let inner_id = loops.iter().find(|(_, data)| data.header == inner_header).unwrap().0;
+
+        // Check Outer Loop properties
+        assert_eq!(loops[outer_id].parent, None);
+        assert_eq!(loops[outer_id].level, 1);
+
+        // Check Inner Loop properties
+        assert_eq!(loops[inner_id].parent, Some(*outer_id));
+        assert_eq!(loops[inner_id].level, 2);
+
+        // Check BB mapping (ensure nodes map to the INNERMOST loop)
+        assert_eq!(bb_to_loop.get(&outer_header), Some(outer_id));
+        assert_eq!(bb_to_loop.get(&outer_latch), Some(outer_id));
+        assert_eq!(bb_to_loop.get(&inner_header), Some(inner_id));
+        assert_eq!(bb_to_loop.get(&inner_latch), Some(inner_id));
+        assert_eq!(bb_to_loop.get(&entry), None);
     }
 
     #[test]
@@ -225,18 +256,21 @@ mod tests {
         let header2 = g.add_node("Header2");
 
         g.add_edge(entry, header1, ());
-        g.add_edge(header1, header1, ()); // Loop 1
-
+        g.add_edge(header1, header1, ()); // Loop 1 (Self loop)
         g.add_edge(entry, header2, ());
-        g.add_edge(header2, header2, ()); // Loop 2
+        g.add_edge(header2, header2, ()); // Loop 2 (Self loop)
 
         let dom_tree = DomTree::build(entry, &g);
         let mut analysis = LoopsAnalysis::new();
         analysis.compute(&g, entry, &dom_tree);
+
         let loops = analysis.loops();
-        for (id, loopdata) in loops {
-            println!("{id} -> {:?}, {}", loopdata.parent, loopdata.header.index());
+        assert_eq!(loops.len(), 2);
+
+        // Both loops should be at level 1 with no parents
+        for (_, loop_data) in loops.iter() {
+            assert_eq!(loop_data.parent, None);
+            assert_eq!(loop_data.level, 1);
         }
-        dbg!(analysis.bb_to_loop());
     }
 }
