@@ -1,6 +1,7 @@
 pub mod dom_tree;
 pub mod graphviz;
 pub mod loops;
+pub mod scalar_evolution;
 pub mod terminator;
 pub mod traverse;
 
@@ -10,6 +11,8 @@ pub trait DirectedGraph {
     type Node: Copy + PartialEq + Eq + core::hash::Hash + core::fmt::Debug;
 
     fn num_nodes(&self) -> usize;
+
+    fn nodes_iter(&self) -> impl Iterator<Item = Self::Node>;
 }
 
 impl DirectedGraph for koopa::ir::FunctionData {
@@ -17,6 +20,10 @@ impl DirectedGraph for koopa::ir::FunctionData {
 
     fn num_nodes(&self) -> usize {
         self.dfg().bbs().len()
+    }
+    
+    fn nodes_iter(&self) -> impl Iterator<Item = Self::Node> {
+        self.dfg().bbs().keys().cloned()
     }
 }
 
@@ -69,6 +76,10 @@ mod pet {
 
         fn num_nodes(&self) -> usize {
             self.node_count()
+        }
+
+        fn nodes_iter(&self) -> impl Iterator<Item = Self::Node> {
+            self.node_indices()
         }
     }
 
