@@ -184,8 +184,57 @@ impl<N: PartialEq + Eq + Hash + Copy + Debug> LoopsAnalysis<N> {
         return false;
     }
 
-    /// definition of loop header(BB):
-    ///     BB dominates one of its predecessors
+    /// bottom up, inner -> outer
+    pub fn bottom_up(&self) -> impl Iterator<Item = Loop> {
+        let mut res = self.loops.iter().map(|(lp, data)| (*lp, data.level)).collect::<Vec<_>>();
+        res.sort_by(|a, b| b.1.cmp(&a.1));
+        res.into_iter().map(|(lp, _)| lp)
+    }
+
+    /// reverse `bb_to_loop`
+    pub fn loop_to_bb(&self) -> HashMap<Loop, Vec<N>> {
+        let mut res: HashMap<Loop, Vec<N>> = HashMap::new();
+        for (k, v) in &self.bb_to_loop {
+            res.entry(*v).or_default().push(*k);
+        }
+
+        res
+    }
+
+    /// preheader: BB that is the only pred of the loop header that doesn't belong to the loop
+    pub fn preheader<G: DirectedGraph<Node = N> + Graph>(&self, graph: &G, lp: Loop) -> Option<N> {
+        let header = self.loops.get(&lp)?.header;
+        let mut preheader = None;
+        for pred in graph.preds(header).filter(move |&pred| !self.contains(lp, pred)) {
+            match preheader {
+                None => preheader = Some(pred),
+                Some(_) => return None,
+            }
+        }
+        preheader
+    }
+
+    /// exits: BB that doesn't belong to the loop but one of its pred does
+    pub fn exits<G: DirectedGraph<Node = N> + Graph>(
+        &self,
+        graph: &G,
+        lp: Loop,
+    ) -> impl Iterator<Item = N> {
+        graph.nodes_iter().filter(move |&node| {
+            !self.contains(lp, node) && graph.preds(node).any(|pred| self.contains(lp, pred))
+        })
+    }
+
+    /// latches: BB that contained by the loop and have on edge to the header of the loop header
+    pub fn latches<G: DirectedGraph<Node = N> + Graph>(&self, graph: &G, lp: Loop) -> Vec<N> {
+        let Some(data) = self.loops.get(&lp) else {
+            return vec![];
+        };
+        graph.preds(data.header).filter(move |&node| self.contains(lp, node)).collect()
+    }
+
+    /// loop header:
+    ///     BB that dominates one of its predecessors
     fn is_loop_header<G: DirectedGraph<Node = N> + Graph>(
         graph: &G,
         node: N,
