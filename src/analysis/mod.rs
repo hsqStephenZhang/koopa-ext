@@ -1,4 +1,4 @@
-/// ∨ oepration to compute the least upper bound
+/// ∨ operation to compute the least upper bound
 /// of two elements in a partial order
 pub trait JoinSemiLattice {
     /// returns if self is changed
@@ -27,7 +27,7 @@ impl<V: PartialEq> JoinSemiLattice for FlattenValue<V> {
         match self {
             FlattenValue::Top => false,
             FlattenValue::Concrete(v1) => {
-                // if other is concret or top, the result of join must be Top
+                // if other is concert or top, the result of join must be Top
                 match other {
                     FlattenValue::Top => {
                         *self = FlattenValue::Top;
@@ -64,7 +64,7 @@ impl Direction for Forward {}
 
 pub struct Backward;
 
-pub trait DataFlowAnalaysis {
+pub trait DataFlowAnalysis {
     type Direction: Direction;
 
     type Domain: JoinSemiLattice;
@@ -81,7 +81,7 @@ pub trait DataFlowAnalaysis {
 
 pub struct DeadcodeElimination {}
 
-// impl DataFlowAnalaysis for DeadcodeElimination {
+// impl DataFlowAnalysis for DeadcodeElimination {
 //     type Direction;
 
 //     type Domain;

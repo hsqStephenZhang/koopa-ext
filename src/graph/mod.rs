@@ -1,5 +1,6 @@
 pub mod dom_tree;
 pub mod graphviz;
+pub mod loops;
 pub mod terminator;
 pub mod traverse;
 
@@ -54,6 +55,35 @@ impl Successors for koopa::ir::FunctionData {
 pub trait Graph: Successors + Predecessors {}
 
 impl<T> Graph for T where T: Successors + Predecessors {}
+
+/// for quick construction of a graph
+#[cfg(test)]
+mod pet {
+    use petgraph::Direction;
+    use petgraph::graph::{DiGraph, NodeIndex};
+
+    use crate::graph::*;
+
+    impl<V, E> DirectedGraph for DiGraph<V, E> {
+        type Node = NodeIndex;
+
+        fn num_nodes(&self) -> usize {
+            self.node_count()
+        }
+    }
+
+    impl<V, E> Predecessors for DiGraph<V, E> {
+        fn preds(&self, cur: Self::Node) -> impl Iterator<Item = Self::Node> {
+            self.neighbors_directed(cur, Direction::Incoming)
+        }
+    }
+
+    impl<V, E> Successors for DiGraph<V, E> {
+        fn succs(&self, cur: Self::Node) -> impl Iterator<Item = Self::Node> {
+            self.neighbors_directed(cur, Direction::Outgoing)
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {

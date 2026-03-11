@@ -37,7 +37,7 @@ impl<N: PartialEq + Eq + Hash + Copy> DomTree<N> {
             // in naive algorithm(dataflow approach),
             // dom(bb) is the intersection of doms(pred) forall pred ∈ preds(bb)
             // Cooper-Harvey-Kennedy algorithm
-            // our idom(bb) is the neartest common ancester of pred forall pred ∈ preds(bb)
+            // our idom(bb) is the neartest common ancestor of pred forall pred ∈ preds(bb)
             for bb in rpo.iter().filter(|&&bb| bb != entry_node) {
                 let old_idom = idoms.get(bb).cloned();
                 let mut new_idom = None;
@@ -46,7 +46,7 @@ impl<N: PartialEq + Eq + Hash + Copy> DomTree<N> {
                     match (new_idom, idoms.get(&pred)) {
                         (Some(pred1), Some(_)) => {
                             new_idom =
-                                Some(nearest_common_ancester(pred1, pred, &bb_to_rpo, &idoms));
+                                Some(nearest_common_ancestor(pred1, pred, &bb_to_rpo, &idoms));
                         }
                         (None, Some(_)) => {
                             new_idom = Some(pred);
@@ -134,7 +134,7 @@ impl<'t, N: PartialEq + Eq + Hash + Copy> Iterator for IdomIterator<'t, N> {
     }
 }
 
-fn nearest_common_ancester<N: PartialEq + Eq + Hash + Copy>(
+fn nearest_common_ancestor<N: PartialEq + Eq + Hash + Copy>(
     mut pred1: N,
     mut pred2: N,
     bb_to_rpo: &HashMap<N, usize>,
@@ -148,7 +148,7 @@ fn nearest_common_ancester<N: PartialEq + Eq + Hash + Copy>(
             // # panic safety:
             // the dom tree is constructed downward
             // so when we iterate over preds1's idoms,
-            // it's ancester's idoms has already been constructed
+            // it's ancestor's idoms has already been constructed
             pred1 = partial_idoms[&pred1];
         }
         while bb_to_rpo[&pred1] < bb_to_rpo[&pred2] {
@@ -156,40 +156,17 @@ fn nearest_common_ancester<N: PartialEq + Eq + Hash + Copy>(
         }
     }
 
-    // we are iterating over a tree, so the ancester of a and b must meet at some point,
-    // which is the neartest commoon ancester for us.
+    // we are iterating over a tree, so the ancestor of a and b must meet at some point,
+    // which is the neartest commoon ancestor for us.
     pred1
 }
 
 #[cfg(test)]
 mod tests {
-
-    use petgraph::Direction;
     use petgraph::algo::dominators::simple_fast;
     use petgraph::graph::{DiGraph, NodeIndex};
 
     use crate::graph::dom_tree::DomTree;
-    use crate::graph::*;
-
-    impl<V, E> DirectedGraph for DiGraph<V, E> {
-        type Node = NodeIndex;
-
-        fn num_nodes(&self) -> usize {
-            self.node_count()
-        }
-    }
-
-    impl<V, E> Predecessors for DiGraph<V, E> {
-        fn preds(&self, cur: Self::Node) -> impl Iterator<Item = Self::Node> {
-            self.neighbors_directed(cur, Direction::Incoming)
-        }
-    }
-
-    impl<V, E> Successors for DiGraph<V, E> {
-        fn succs(&self, cur: Self::Node) -> impl Iterator<Item = Self::Node> {
-            self.neighbors_directed(cur, Direction::Outgoing)
-        }
-    }
 
     fn assert_dom_tree_eq(g: &DiGraph<&str, ()>, entry: NodeIndex) {
         let petgraph_doms = simple_fast(g, entry);
