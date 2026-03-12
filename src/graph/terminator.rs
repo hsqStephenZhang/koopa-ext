@@ -6,8 +6,6 @@ pub enum TerminatorKind {
     Branch(values::Branch),
     /// Unconditional jump.
     Jump(values::Jump),
-    /// Function call.
-    Call(values::Call),
     /// Function return.
     Return(values::Return),
 }
@@ -19,8 +17,7 @@ impl TryFrom<ValueKind> for TerminatorKind {
         let res = match value {
             ValueKind::Branch(branch) => Self::Branch(branch),
             ValueKind::Jump(jump) => Self::Jump(jump),
-            ValueKind::Call(call) => Self::Call(call),
-            ValueKind::Return(_) => todo!(),
+            ValueKind::Return(ret) => Self::Return(ret),
             _ => return Err(()),
         };
         Ok(res)
