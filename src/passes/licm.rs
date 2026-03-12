@@ -10,6 +10,9 @@ use crate::graph::traverse::reverse_post_order;
 
 pub struct LICM;
 
+/// TODO:
+///     1. handle more valuekind, especially load/store
+///     2. fixed point iteration
 impl FunctionPass for LICM {
     fn run_on(&mut self, _func: koopa::ir::Function, data: &mut koopa::ir::FunctionData) {
         let entry = data.layout().entry_bb().unwrap();
