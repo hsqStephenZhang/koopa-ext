@@ -45,7 +45,14 @@ impl FunctionPass for LICM {
                         // 3. a value defined outside the loop
                         let is_inv_inst = match data.layout().parent_bb(val) {
                             Some(bb) => !loops.contains(lp, bb),
-                            None => false,
+                            None => {
+                                let kind = data.dfg().value(val).kind();
+                                match kind {
+                                    koopa::ir::ValueKind::FuncArgRef(_) => true,
+                                    koopa::ir::ValueKind::GlobalAlloc(_) => true,
+                                    _ => false,
+                                }
+                            }
                         };
                         let res = is_const || is_inv_inst || is_computed_inv;
                         res
@@ -69,7 +76,6 @@ impl FunctionPass for LICM {
                         }
                         _ => false,
                     };
-                    dbg!(is_invariant);
                     is_invariants.insert(inst, is_invariant);
                     if is_invariant {
                         to_hoist.push(inst);
@@ -77,7 +83,7 @@ impl FunctionPass for LICM {
                 }
 
                 // suppose prehead does exist and don't have to bother with creating new preheader
-                // TODO: create new preheader if None
+                // TODO: run loop simplify pass before LICM
                 let preheader = loops.preheader(data, lp).unwrap();
 
                 for inst in to_hoist {
@@ -109,9 +115,8 @@ mod tests {
         let src = r#"
 decl @getint(): i32
 
-fun @test(): i32 {
+fun @test(%0: i32): i32 {
 %entry:
-  %0 = call @getint()  // n
   %1 = call @getint()  // a
   %2 = call @getint()  // b
   jump %while_cond(0, 0) // (sum, i)
@@ -122,13 +127,14 @@ fun @test(): i32 {
 
 %while_body:
   %6 = add %1, %2       // <-- this is an invariant deps on %1 and %2
+  %20 = add %0, %1      // <-- this is an invariant deps on %0 and %1
   jump %while_body2
 
 %while_body2:
   %7 = add %6, 2        // <-- this is an invariant deps on %6
   %8 = add %7, 3        // <-- this is an invariant deps on %7
   %9 = div %8, %6       // <-- has side effect, should not hoist
-  %10 = add %9, 1       // should not 
+  %10 = add %9, 1       // should not
   %90 = add %3, %10      // sum + inv
   %91 = add %4, 1       // i + 1
   jump %while_cond(%90, %91)
