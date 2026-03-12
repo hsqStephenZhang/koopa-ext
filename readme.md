@@ -10,11 +10,13 @@ this crate offers a wide range of utilities missed by koopa, including
   - graphviz visualization
 - passes
   - LICM
+  - Loop Simplify
 
 
 ## TODOs
 
 - [ ] scalar evoution analysis
+- [ ] alias analysis
 - [ ] inliner
 - [ ] gvn
 - [ ] Loop Simpliy
