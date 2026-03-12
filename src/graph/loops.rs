@@ -36,9 +36,17 @@ pub struct LoopData<N> {
     level: usize,
 }
 
-impl<N> LoopData<N> {
+impl<N: Clone + Copy> LoopData<N> {
     pub fn new(header: N, parent: Option<Loop>) -> Self {
         Self { header, parent, level: 1 }
+    }
+
+    pub fn header(&self) -> N {
+        self.header
+    }
+
+    pub fn parent(&self) -> Option<Loop> {
+        self.parent
     }
 }
 
@@ -163,6 +171,16 @@ impl<N: PartialEq + Eq + Hash + Copy + Debug> LoopsAnalysis<N> {
             } else {
                 self.loops.get_mut(&id).unwrap().level = 1; // root loop
             }
+        }
+    }
+
+    /// add a new bb to a loop, returns if the bb's loop is set by us
+    pub fn add_bb_to_loop(&mut self, lp: Loop, node: N) -> bool {
+        if self.bb_to_loop.contains_key(&node) {
+            false
+        } else {
+            self.bb_to_loop.insert(node, lp);
+            true
         }
     }
 

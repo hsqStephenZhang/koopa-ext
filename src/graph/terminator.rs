@@ -1,3 +1,4 @@
+use koopa::ir::entities::ValueData;
 use koopa::ir::{BasicBlock, FunctionData, Value, ValueKind, values};
 
 /// The kind of a terminator instruction.
@@ -26,6 +27,8 @@ impl TryFrom<ValueKind> for TerminatorKind {
 
 pub trait TerminatorExt {
     fn terminator(&self, bb: BasicBlock) -> (Value, TerminatorKind);
+
+    fn terminator_raw(&self, bb: BasicBlock) -> (Value, ValueData);
 }
 
 impl TerminatorExt for FunctionData {
@@ -33,6 +36,14 @@ impl TerminatorExt for FunctionData {
         let bb_node = self.layout().bbs().node(&bb).unwrap();
         let value = *bb_node.insts().iter().last().unwrap().0;
         let data = TerminatorKind::try_from(self.dfg().value(value).kind().clone()).unwrap();
+        (value, data)
+    }
+
+    fn terminator_raw(&self, bb: BasicBlock) -> (Value, ValueData) {
+        let bb_node = self.layout().bbs().node(&bb).unwrap();
+        let value = *bb_node.insts().iter().last().unwrap().0;
+        let data = self.dfg().value(value).clone();
+        assert!(matches!(data.kind(), ValueKind::Branch(_) | ValueKind::Jump(_)));
         (value, data)
     }
 }
