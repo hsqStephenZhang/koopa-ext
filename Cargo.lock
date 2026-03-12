@@ -150,7 +150,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "koopa-data-structures"
+name = "koopa-ext"
 version = "0.1.0"
 dependencies = [
  "indexmap",
