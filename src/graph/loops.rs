@@ -195,7 +195,7 @@ impl<N: PartialEq + Eq + Hash + Copy + Debug> LoopsAnalysis<N> {
         let Some(mut target_lp) = self.bb_to_loop.get(&node).copied() else {
             return false;
         };
-        while let Some(loop_data) = self.loops.get(&lp) {
+        while let Some(loop_data) = self.loops.get(&target_lp) {
             if target_lp == lp {
                 return true;
             }
