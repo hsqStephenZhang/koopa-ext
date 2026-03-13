@@ -1,4 +1,4 @@
-///! Loop Invariatn Code Motion
+//! Loop Invariatn Code Motion
 use std::collections::HashMap;
 
 use koopa::ir::{BasicBlock, BinaryOp, FunctionData, Value, ValueKind};
@@ -58,15 +58,15 @@ impl FunctionPass for LICM {
                                 .dfg()
                                 .values()
                                 .get(&val)
-                                .map(|data| match data.kind() {
-                                    koopa::ir::ValueKind::FuncArgRef(_)
-                                    | koopa::ir::ValueKind::GlobalAlloc(_) => true,
-                                    _ => false,
+                                .map(|data| {
+                                    matches!(
+                                        data.kind(),
+                                        ValueKind::FuncArgRef(_) | ValueKind::GlobalAlloc(_)
+                                    )
                                 })
                                 .unwrap_or_default(),
                         };
-                        let res = is_const || is_inv_inst || is_computed_inv;
-                        res
+                        is_const || is_inv_inst || is_computed_inv
                     };
 
                 // instruction to hoist to the preheader of the loop

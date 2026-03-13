@@ -62,12 +62,9 @@ impl FunctionPass for LoopSimpliy {
                 // 1. it's entry block. we need to simpliy create an new entry block and jump to header.
                 //    **But that's forbidden in IR, since entry cannot have any preds**
                 // 2. it's an unreachable loop's header. let's simply ignore the case.
-                match (loops.loops()[&lp].parent(), preheader) {
-                    (Some(parent), Some(bb)) => {
-                        // dedicate_exit is outside the loop
-                        loops.add_bb_to_loop(parent, bb);
-                    }
-                    _ => {}
+                if let (Some(parent), Some(bb)) = (loops.loops()[&lp].parent(), preheader) {
+                    // dedicate_exit is outside the loop
+                    loops.add_bb_to_loop(parent, bb);
                 }
             }
 
@@ -109,12 +106,9 @@ impl FunctionPass for LoopSimpliy {
                     loops.contains(lp, *pred)
                 });
 
-                match (dedicate_exit, loops.loops()[&lp].parent()) {
-                    (Some(bb), Some(parent)) => {
-                        // dedicate_exit is outside the loop
-                        loops.add_bb_to_loop(parent, bb);
-                    }
-                    _ => {}
+                if let (Some(bb), Some(parent)) = (dedicate_exit, loops.loops()[&lp].parent()) {
+                    // dedicate_exit is outside the loop
+                    loops.add_bb_to_loop(parent, bb);
                 }
             }
         }
@@ -145,7 +139,7 @@ fn merge_preds(
     let builder = data.dfg_mut().new_bb();
     let merge_bb = builder.basic_block_with_param_names(Some(merge_bb_name), param_tys);
     data.layout_mut().bbs_mut().push_key_back(merge_bb).unwrap();
-    let preheader_params = data.dfg().bb(merge_bb).params().iter().cloned().collect::<Vec<_>>();
+    let preheader_params = data.dfg().bb(merge_bb).params().to_vec();
 
     // 2. link preheader with original preds of the loop header
     for pred in preds {

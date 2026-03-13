@@ -59,9 +59,15 @@ pub struct LoopsAnalysis<N> {
     next_loop_id: u32,
 }
 
+impl<N> Default for LoopsAnalysis<N> {
+    fn default() -> Self {
+        Self { loops: Default::default(), bb_to_loop: Default::default(), next_loop_id: 0 }
+    }
+}
+
 impl<N: PartialEq + Eq + Hash + Copy + Debug> LoopsAnalysis<N> {
     pub fn new() -> Self {
-        Self { loops: Default::default(), bb_to_loop: Default::default(), next_loop_id: 0 }
+        Self::default()
     }
 
     fn next_id(&mut self) -> Loop {
@@ -176,11 +182,11 @@ impl<N: PartialEq + Eq + Hash + Copy + Debug> LoopsAnalysis<N> {
 
     /// add a new bb to a loop, returns if the bb's loop is set by us
     pub fn add_bb_to_loop(&mut self, lp: Loop, node: N) -> bool {
-        if self.bb_to_loop.contains_key(&node) {
-            false
-        } else {
-            self.bb_to_loop.insert(node, lp);
+        if let std::collections::hash_map::Entry::Vacant(e) = self.bb_to_loop.entry(node) {
+            e.insert(lp);
             true
+        } else {
+            false
         }
     }
 
@@ -199,13 +205,13 @@ impl<N: PartialEq + Eq + Hash + Copy + Debug> LoopsAnalysis<N> {
                 break;
             }
         }
-        return false;
+        false
     }
 
     /// bottom up, inner -> outer
     pub fn bottom_up(&self) -> impl Iterator<Item = Loop> {
         let mut res = self.loops.iter().map(|(lp, data)| (*lp, data.level)).collect::<Vec<_>>();
-        res.sort_by(|a, b| b.1.cmp(&a.1));
+        res.sort_by_key(|b| std::cmp::Reverse(b.1));
         res.into_iter().map(|(lp, _)| lp)
     }
 

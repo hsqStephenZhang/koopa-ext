@@ -65,10 +65,10 @@ impl FunctionPass for SimplifyCFG {
                 }
             });
 
-            if let Some((bb, pred)) = target_pair {
-                if merge_bb(data, pred, bb) {
-                    changed = true;
-                }
+            if let Some((bb, pred)) = target_pair
+                && merge_bb(data, pred, bb)
+            {
+                changed = true;
             }
 
             if !changed {
@@ -85,7 +85,7 @@ impl FunctionPass for SimplifyCFG {
                 .bbs()
                 .keys()
                 .find(|&bb| {
-                    let insts = data.layout().bbs().node(&bb).unwrap().insts();
+                    let insts = data.layout().bbs().node(bb).unwrap().insts();
                     insts.len() == 1
                         && matches!(
                             data.dfg().value(*insts.back_key().unwrap()).kind(),
@@ -94,10 +94,10 @@ impl FunctionPass for SimplifyCFG {
                 })
                 .copied();
 
-            if let Some(empty_bb) = empty_bb {
-                if eliminate_empty_bb(data, empty_bb) {
-                    changed = true;
-                }
+            if let Some(empty_bb) = empty_bb
+                && eliminate_empty_bb(data, empty_bb)
+            {
+                changed = true;
             }
 
             if !changed {
@@ -129,7 +129,7 @@ fn merge_bb(data: &mut koopa::ir::FunctionData, pred: BasicBlock, bb: BasicBlock
         ValueKind::Jump(jump) => jump.args().iter().copied().collect::<SmallVec<[Value; 4]>>(),
         _ => todo!(),
     };
-    let v_map = params.into_iter().zip(args.into_iter()).collect::<HashMap<_, _>>();
+    let v_map = params.into_iter().zip(args).collect::<HashMap<_, _>>();
 
     // 2. add all instructions in `bb` to `pred`
     //    fix the usage of BlockParams of `bb` in these insts
@@ -179,7 +179,7 @@ fn eliminate_empty_bb(data: &mut koopa::ir::FunctionData, empty_bb: BasicBlock) 
 
         match jump_inst.kind() {
             ValueKind::Jump(jump) => {
-                let args = jump.args().iter().copied().collect::<Vec<_>>();
+                let args = jump.args().to_vec();
                 (jump.target(), args)
             }
             _ => unreachable!(),
@@ -201,7 +201,7 @@ fn eliminate_empty_bb(data: &mut koopa::ir::FunctionData, empty_bb: BasicBlock) 
 
     for pred in &preds {
         let pred_terminator_val =
-            *data.layout().bbs().node(&pred).unwrap().insts().back_key().unwrap();
+            *data.layout().bbs().node(pred).unwrap().insts().back_key().unwrap();
         let mut new_terminator_data = data.dfg().value(pred_terminator_val).clone();
 
         match new_terminator_data.kind_mut() {

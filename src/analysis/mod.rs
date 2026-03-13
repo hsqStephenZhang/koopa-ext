@@ -64,6 +64,8 @@ impl Direction for Forward {}
 
 pub struct Backward;
 
+impl Direction for Backward {}
+
 pub trait DataFlowAnalysis {
     type Direction: Direction;
 
@@ -78,25 +80,3 @@ pub trait DataFlowAnalysis {
     /// will be invoked after the analysis
     fn apply_effects(func: &mut koopa::ir::FunctionData);
 }
-
-pub struct DeadcodeElimination {}
-
-// impl DataFlowAnalysis for DeadcodeElimination {
-//     type Direction;
-
-//     type Domain;
-
-//     fn bottom_value(&self) -> Self::Domain {
-//         todo!()
-//     }
-
-//     fn run_analysis(func: &koopa::ir::FunctionData) {
-//         todo!()
-//     }
-
-//     fn apply_effects(func: &mut koopa::ir::FunctionData) {
-//         todo!()
-//     }
-// }
-
-pub mod constant_fold;

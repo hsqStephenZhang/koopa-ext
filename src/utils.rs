@@ -23,8 +23,8 @@ pub trait ValuesVisit {
 impl ValuesVisit for Vec<Value> {
     type Output = ();
 
-    fn visit(&mut self, mut visitor: impl FnMut(&mut Value) -> Self::Output) {
-        self.iter_mut().for_each(|v| visitor(v));
+    fn visit(&mut self, visitor: impl FnMut(&mut Value) -> Self::Output) {
+        self.iter_mut().for_each(visitor);
     }
 }
 
