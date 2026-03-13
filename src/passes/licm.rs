@@ -1,8 +1,9 @@
 ///! Loop Invariatn Code Motion
 use std::collections::HashMap;
 
-use koopa::ir::{BasicBlock, BinaryOp, FunctionData, Value};
+use koopa::ir::{BasicBlock, BinaryOp, FunctionData, Value, ValueKind};
 use koopa::opt::FunctionPass;
+use rustc_hash::FxHashMap;
 
 use crate::graph::dom_tree::DomTree;
 use crate::graph::loops::LoopsAnalysis;
@@ -27,7 +28,7 @@ impl FunctionPass for LICM {
         let mut loop_to_bb = loops.loop_to_bb();
         for lp in loops.bottom_up() {
             // the basic block in the loop, we sort it by RPO
-            let mut is_invariants: HashMap<Value, bool> = HashMap::new();
+            let mut is_invariants: FxHashMap<Value, bool> = FxHashMap::default();
             let mut lp_basic_blocks = loop_to_bb.remove(&lp).unwrap();
             lp_basic_blocks.sort_by(|a, b| bb_to_rpo_num[a].cmp(&bb_to_rpo_num[b]));
 
@@ -40,22 +41,29 @@ impl FunctionPass for LICM {
 
                 // tells if the given val is an invariant for current lp
                 let test_invar =
-                    |data: &FunctionData, partial_map: &mut HashMap<Value, bool>, val: Value| {
+                    |data: &FunctionData, partial_map: &mut FxHashMap<Value, bool>, val: Value| {
                         // 1. const
-                        let is_const = data.dfg().value(val).kind().is_const();
+                        let is_const = data
+                            .dfg()
+                            .values() // it might be a global value
+                            .get(&val)
+                            .map(|v| v.kind().is_const())
+                            .unwrap_or_default();
                         // 2. already set
                         let is_computed_inv = partial_map.get(&val).copied().unwrap_or_default();
                         // 3. a value defined outside the loop
                         let is_inv_inst = match data.layout().parent_bb(val) {
                             Some(bb) => !loops.contains(lp, bb),
-                            None => {
-                                let kind = data.dfg().value(val).kind();
-                                match kind {
-                                    koopa::ir::ValueKind::FuncArgRef(_) => true,
-                                    koopa::ir::ValueKind::GlobalAlloc(_) => true,
+                            None => data
+                                .dfg()
+                                .values()
+                                .get(&val)
+                                .map(|data| match data.kind() {
+                                    koopa::ir::ValueKind::FuncArgRef(_)
+                                    | koopa::ir::ValueKind::GlobalAlloc(_) => true,
                                     _ => false,
-                                }
-                            }
+                                })
+                                .unwrap_or_default(),
                         };
                         let res = is_const || is_inv_inst || is_computed_inv;
                         res
@@ -69,13 +77,24 @@ impl FunctionPass for LICM {
                     // an instruction is an invaraint, if all its operands are invariant
                     let value_data = data.dfg().value(inst);
                     let is_invariant = match value_data.kind() {
-                        koopa::ir::ValueKind::Binary(binary) => {
+                        ValueKind::Binary(binary) => {
                             let is_inv1 = test_invar(data, &mut is_invariants, binary.lhs());
                             let is_inv2 = test_invar(data, &mut is_invariants, binary.rhs());
 
                             (!has_side_effect(binary.op()) || bb_dominate_exits)
                                 && is_inv1
                                 && is_inv2
+                        }
+                        ValueKind::GetPtr(get_ptr) => {
+                            let is_inv1 = test_invar(data, &mut is_invariants, get_ptr.index());
+                            let is_inv2 = test_invar(data, &mut is_invariants, get_ptr.src());
+                            is_inv1 && is_inv2
+                        }
+                        ValueKind::GetElemPtr(get_elem_ptr) => {
+                            let is_inv1 =
+                                test_invar(data, &mut is_invariants, get_elem_ptr.index());
+                            let is_inv2 = test_invar(data, &mut is_invariants, get_elem_ptr.src());
+                            is_inv1 && is_inv2
                         }
                         _ => false,
                     };
@@ -149,6 +168,46 @@ fun @test(%0: i32): i32 {
         let driver: Driver<_> = src.into();
         let mut prog = driver.generate_program().unwrap();
         let (func, data) = prog.funcs_mut().iter_mut().find(|bb| bb.1.name() == "@test").unwrap();
+        let mut licm = LICM;
+        licm.run_on(*func, data);
+
+        let mut visitor = KoopaVisitor;
+        let mut nm = NameManager::new();
+        let mut w = std::io::stdout();
+        visitor.visit(&mut w, &mut nm, &prog).unwrap();
+    }
+
+    #[test]
+    fn test_get_ptr_and_get_elem_ptr() {
+        let src = r#"
+fun @test_ptr(): i32 {
+%entry:
+  %x = alloc [i32, 10]
+  jump %while_cond(0, 0)
+
+%while_cond(%1: i32, %sum: i32):
+  %2 = lt %1, 10
+  br %2, %while_body, %while_end
+
+%while_body:
+  %3 = getelemptr %x, 0   // <-- invariant
+  %4 = getelemptr %x, 1   // <-- invariant
+  %5 = getelemptr %x, %1  // <-- not an invariant
+  %6 = load %5
+  %new_sum = add %sum, %6
+  
+  %next = add %1, 1
+
+  jump %while_cond(%next, %new_sum)
+
+%while_end:
+  ret %sum
+}
+"#;
+        let driver: Driver<_> = src.into();
+        let mut prog = driver.generate_program().unwrap();
+        let (func, data) =
+            prog.funcs_mut().iter_mut().find(|bb| bb.1.name() == "@test_ptr").unwrap();
         let mut licm = LICM;
         licm.run_on(*func, data);
 
