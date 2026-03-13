@@ -29,8 +29,9 @@ impl FunctionPass for LICM {
 
         let mut loop_to_bb = loops.loop_to_bb();
         for lp in loops.bottom_up() {
-            // the basic block in the loop, we sort it by RPO
+            // for each lp, we should create a new map recording the invariants
             let mut is_invariants: FxHashMap<Value, bool> = FxHashMap::default();
+            // the basic block in the loop, we sort it by RPO
             let mut lp_basic_blocks = loop_to_bb.remove(&lp).unwrap();
             lp_basic_blocks.sort_by(|a, b| bb_to_rpo_num[a].cmp(&bb_to_rpo_num[b]));
 
