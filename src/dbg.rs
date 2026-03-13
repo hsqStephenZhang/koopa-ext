@@ -1,12 +1,19 @@
 use core::fmt;
 
-use koopa::ir::{BasicBlock, Value, ValueKind};
 use koopa::ir::dfg::DataFlowGraph;
+use koopa::ir::{BasicBlock, Value, ValueKind};
 
 /// A displayable helper for [`ValueKind`].
 pub struct ValueKindDisplay<'a> {
     pub kind: &'a ValueKind,
     pub dfg: &'a DataFlowGraph,
+}
+
+impl<'a> ValueKindDisplay<'a> {
+    pub fn new(dfg: &'a DataFlowGraph, value: Value) -> Self {
+        let kind = dfg.value(value).kind();
+        Self { kind, dfg }
+    }
 }
 
 pub trait ValueKindExt {

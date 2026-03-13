@@ -224,11 +224,11 @@ fn eliminate_empty_bb(data: &mut koopa::ir::FunctionData, empty_bb: BasicBlock) 
                     let v_map =
                         params.clone().into_iter().zip(prev_args).collect::<HashMap<_, _>>();
                     let mut final_args = jump_args.clone();
-                    if replace_operands(&mut final_args, &v_map) {
-                        data.dfg_mut()
-                            .replace_value_with(pred_terminator_val)
-                            .jump_with_args(target_bb, final_args);
-                    }
+                    replace_operands(&mut final_args, &v_map);
+
+                    data.dfg_mut()
+                        .replace_value_with(pred_terminator_val)
+                        .jump_with_args(target_bb, final_args);
                     succ_cnt += 1;
                 }
             }
@@ -262,7 +262,6 @@ fn eliminate_empty_bb(data: &mut koopa::ir::FunctionData, empty_bb: BasicBlock) 
                 if true_bb == false_bb {
                     continue;
                 }
-                succ_cnt += 1;
 
                 data.dfg_mut().replace_value_with(pred_terminator_val).branch_with_args(
                     branch.cond(),
@@ -271,16 +270,17 @@ fn eliminate_empty_bb(data: &mut koopa::ir::FunctionData, empty_bb: BasicBlock) 
                     true_args,
                     false_args,
                 );
+                succ_cnt += 1;
             }
             _ => unreachable!(),
         };
     }
 
-    if succ_cnt == preds.len() {
-        if let Some((_, node)) = data.layout_mut().bbs_mut().remove(&empty_bb) {
-            for (inst, _) in node.insts().iter() {
-                safely_remove_inst_from_dfg(data.dfg_mut(), *inst);
-            }
+    if succ_cnt == preds.len()
+        && let Some((_, node)) = data.layout_mut().bbs_mut().remove(&empty_bb)
+    {
+        for (inst, _) in node.insts().iter() {
+            safely_remove_inst_from_dfg(data.dfg_mut(), *inst);
         }
         data.dfg_mut().remove_bb(empty_bb);
     }
