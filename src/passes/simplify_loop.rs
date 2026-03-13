@@ -54,7 +54,7 @@ impl FunctionPass for LoopSimpliy {
             if loops.preheader(data, lp).is_none() {
                 // 1. create pre-header bb
                 let preheader =
-                    merge_preds(data, header, format!("{}.preheader", header_name), |pred| {
+                    merge_preds(data, header, format!("{}_preheader", header_name), |pred| {
                         !loops.contains(lp, *pred)
                     });
                 assert!(preheader.is_some());
@@ -75,7 +75,7 @@ impl FunctionPass for LoopSimpliy {
             let latches = loops.latches(data, lp);
             if latches.len() > 1 {
                 let merged_latch =
-                    merge_preds(data, header, format!("{}.merged_latch", header_name), |pred| {
+                    merge_preds(data, header, format!("{}_merged_latch", header_name), |pred| {
                         loops.contains(lp, *pred)
                     });
                 loops.add_bb_to_loop(lp, merged_latch.unwrap());
@@ -282,9 +282,9 @@ fun @test(%cond1: i32, %cond2: i32): i32 {
         let mut lp_simplify = LoopSimpliy;
         lp_simplify.run_on(*func, data);
 
-        let preheader = find_bb(data, "%loop_header.preheader").expect("Should generate preheader");
+        let preheader = find_bb(data, "%loop_header_preheader").expect("Should generate preheader");
         let merged_latch =
-            find_bb(data, "%loop_header.merged_latch").expect("Should generate merged latch");
+            find_bb(data, "%loop_header_merged_latch").expect("Should generate merged latch");
         let header = find_bb(data, "%loop_header").unwrap();
 
         let header_preds: Vec<_> = data.preds(header).collect();
@@ -388,7 +388,7 @@ fun @test_nested(%cond: i32): i32 {
         lp_simplify.run_on(*func, data);
 
         let inner_preheader =
-            find_bb(data, "%inner_header.preheader").expect("Inner loop needs a preheader");
+            find_bb(data, "%inner_header_preheader").expect("Inner loop needs a preheader");
         let inner_header = find_bb(data, "%inner_header").unwrap();
 
         let inner_header_preds: Vec<_> = data.preds(inner_header).collect();
