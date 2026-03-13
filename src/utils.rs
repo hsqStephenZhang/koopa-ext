@@ -8,64 +8,90 @@ use koopa::ir::entities::ValueData;
 /// unlink the inst and safely remove it from the
 pub fn safely_remove_inst_from_dfg(dfg: &mut DataFlowGraph, value: Value) {
     let ty = dfg.value(value).ty().clone();
-    dfg.replace_value_with(value).undef(ty);
+    if !ty.is_unit() {
+        dfg.replace_value_with(value).undef(ty);
+    }
     dfg.remove_value(value);
+}
+
+pub trait ValuesVisit {
+    type Output;
+
+    fn visit(&mut self, visitor: impl FnMut(&mut Value) -> Self::Output);
+}
+
+impl ValuesVisit for Vec<Value> {
+    type Output = ();
+
+    fn visit(&mut self, mut visitor: impl FnMut(&mut Value) -> Self::Output) {
+        self.iter_mut().for_each(|v| visitor(v));
+    }
+}
+
+impl ValuesVisit for ValueData {
+    type Output = ();
+
+    fn visit(&mut self, mut visitor: impl FnMut(&mut Value) -> Self::Output) {
+        match self.kind_mut() {
+            koopa::ir::ValueKind::Load(load) => visitor(load.src_mut()),
+            koopa::ir::ValueKind::Store(store) => {
+                visitor(store.dest_mut());
+                visitor(store.value_mut());
+            }
+            koopa::ir::ValueKind::GetPtr(get_ptr) => {
+                visitor(get_ptr.index_mut());
+                visitor(get_ptr.src_mut());
+            }
+            koopa::ir::ValueKind::GetElemPtr(get_elem_ptr) => {
+                visitor(get_elem_ptr.index_mut());
+                visitor(get_elem_ptr.src_mut());
+            }
+            koopa::ir::ValueKind::Binary(binary) => {
+                visitor(binary.lhs_mut());
+                visitor(binary.rhs_mut());
+            }
+            koopa::ir::ValueKind::Branch(branch) => {
+                visitor(branch.cond_mut());
+                for arg in branch.true_args_mut() {
+                    visitor(arg);
+                }
+                for arg in branch.false_args_mut() {
+                    visitor(arg);
+                }
+            }
+            koopa::ir::ValueKind::Jump(jump) => {
+                for arg in jump.args_mut() {
+                    visitor(arg);
+                }
+            }
+            koopa::ir::ValueKind::Call(call) => {
+                for arg in call.args_mut() {
+                    visitor(arg);
+                }
+            }
+            koopa::ir::ValueKind::Return(ret) => {
+                if let Some(ret) = ret.value_mut() {
+                    visitor(ret);
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 /// replace operands in the `ValueData` by the provided `v_map`
 /// returns if it's changed
-pub fn replace_operands(data: &mut ValueData, v_map: &HashMap<Value, Value>) -> bool {
+pub fn replace_operands<V: ValuesVisit<Output = ()>>(
+    data: &mut V,
+    v_map: &HashMap<Value, Value>,
+) -> bool {
     let mut changed = false;
-    let mut replace = |old: &mut Value| {
+    let replacer = |old: &mut Value| {
         if let Some(new) = v_map.get(old) {
             *old = *new;
             changed = true;
         }
     };
-    match data.kind_mut() {
-        koopa::ir::ValueKind::Load(load) => replace(load.src_mut()),
-        koopa::ir::ValueKind::Store(store) => {
-            replace(store.dest_mut());
-            replace(store.value_mut());
-        }
-        koopa::ir::ValueKind::GetPtr(get_ptr) => {
-            replace(get_ptr.index_mut());
-            replace(get_ptr.src_mut());
-        }
-        koopa::ir::ValueKind::GetElemPtr(get_elem_ptr) => {
-            replace(get_elem_ptr.index_mut());
-            replace(get_elem_ptr.src_mut());
-        }
-        koopa::ir::ValueKind::Binary(binary) => {
-            replace(binary.lhs_mut());
-            replace(binary.rhs_mut());
-        }
-        koopa::ir::ValueKind::Branch(branch) => {
-            replace(branch.cond_mut());
-            for arg in branch.true_args_mut() {
-                replace(arg);
-            }
-            for arg in branch.false_args_mut() {
-                replace(arg);
-            }
-        }
-        koopa::ir::ValueKind::Jump(jump) => {
-            for arg in jump.args_mut() {
-                replace(arg);
-            }
-        }
-        koopa::ir::ValueKind::Call(call) => {
-            for arg in call.args_mut() {
-                replace(arg);
-            }
-        }
-        koopa::ir::ValueKind::Return(ret) => {
-            if let Some(ret) = ret.value_mut() {
-                replace(ret);
-            }
-        }
-        _ => {}
-    }
-
+    data.visit(replacer);
     changed
 }

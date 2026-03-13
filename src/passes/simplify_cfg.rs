@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use koopa::ir::builder::ValueBuilder;
+use koopa::ir::builder::{LocalInstBuilder, ValueBuilder};
 use koopa::ir::{BasicBlock, Value, ValueKind};
 use koopa::opt::FunctionPass;
 use smallvec::SmallVec;
@@ -76,8 +76,34 @@ impl FunctionPass for SimplifyCFG {
             }
         }
 
-        // TODO: fix it
         // 3. eliminate BBs that has no instruction other than an jump(unconditional)
+        loop {
+            let mut changed = false;
+
+            let empty_bb = data
+                .layout()
+                .bbs()
+                .keys()
+                .find(|&bb| {
+                    let insts = data.layout().bbs().node(&bb).unwrap().insts();
+                    insts.len() == 1
+                        && matches!(
+                            data.dfg().value(*insts.back_key().unwrap()).kind(),
+                            ValueKind::Jump(_)
+                        )
+                })
+                .copied();
+
+            if let Some(empty_bb) = empty_bb {
+                if eliminate_empty_bb(data, empty_bb) {
+                    changed = true;
+                }
+            }
+
+            if !changed {
+                break;
+            }
+        }
     }
 }
 
@@ -141,6 +167,125 @@ fn merge_bb(data: &mut koopa::ir::FunctionData, pred: BasicBlock, bb: BasicBlock
     data.layout_mut().bb_mut(pred).insts_mut().cursor_back_mut().remove_current().unwrap();
 
     true
+}
+
+// eliminate empty bb, update its predecessor's terminator
+// returns if the structure is changed
+fn eliminate_empty_bb(data: &mut koopa::ir::FunctionData, empty_bb: BasicBlock) -> bool {
+    let (target_bb, jump_args) = {
+        let node = data.layout().bbs().node(&empty_bb).unwrap();
+        let jump_inst_val = node.insts().back_key().unwrap();
+        let jump_inst = data.dfg().value(*jump_inst_val);
+
+        match jump_inst.kind() {
+            ValueKind::Jump(jump) => {
+                let args = jump.args().iter().copied().collect::<Vec<_>>();
+                (jump.target(), args)
+            }
+            _ => unreachable!(),
+        }
+    };
+
+    if target_bb == empty_bb {
+        return false;
+    }
+
+    let preds: SmallVec<[BasicBlock; 4]> = data.preds(empty_bb).collect();
+    if preds.is_empty() {
+        return false;
+    }
+
+    let mut succ_cnt = 0;
+
+    let params = data.dfg().bb(empty_bb).params().iter().copied().collect::<SmallVec<[Value; 4]>>();
+
+    for pred in &preds {
+        let pred_terminator_val =
+            *data.layout().bbs().node(&pred).unwrap().insts().back_key().unwrap();
+        let mut new_terminator_data = data.dfg().value(pred_terminator_val).clone();
+
+        match new_terminator_data.kind_mut() {
+            ValueKind::Jump(jump) => {
+                if jump.target() == empty_bb {
+                    // before:
+                    //
+                    // %pred:
+                    //    jump %empty_bb(%arg1, %arg2)
+                    // %empty_bb(%param1, %param2):
+                    //   jump %next(%v1, %v2, %param2)
+                    //
+
+                    // after:
+                    //
+                    // %pred:
+                    //    jump %next(%v1, %v2, %arg2)
+
+                    let prev_args = jump.args().iter().copied().collect::<SmallVec<[Value; 4]>>();
+                    let v_map =
+                        params.clone().into_iter().zip(prev_args).collect::<HashMap<_, _>>();
+                    let mut final_args = jump_args.clone();
+                    if replace_operands(&mut final_args, &v_map) {
+                        data.dfg_mut()
+                            .replace_value_with(pred_terminator_val)
+                            .jump_with_args(target_bb, final_args);
+                    }
+                    succ_cnt += 1;
+                }
+            }
+            ValueKind::Branch(branch) => {
+                let (true_bb, true_args) = if branch.true_bb() == empty_bb {
+                    let prev_args =
+                        branch.true_args().iter().copied().collect::<SmallVec<[Value; 4]>>();
+                    let v_map =
+                        params.clone().into_iter().zip(prev_args).collect::<HashMap<_, _>>();
+                    let mut final_args = jump_args.clone();
+                    replace_operands(&mut final_args, &v_map);
+
+                    (target_bb, final_args)
+                } else {
+                    (branch.true_bb(), branch.true_args().to_vec())
+                };
+
+                let (false_bb, false_args) = if branch.false_bb() == empty_bb {
+                    let prev_args =
+                        branch.false_args().iter().copied().collect::<SmallVec<[Value; 4]>>();
+                    let v_map =
+                        params.clone().into_iter().zip(prev_args).collect::<HashMap<_, _>>();
+                    let mut final_args = jump_args.clone();
+                    replace_operands(&mut final_args, &v_map);
+
+                    (target_bb, final_args)
+                } else {
+                    (branch.false_bb(), branch.false_args().to_vec())
+                };
+
+                if true_bb == false_bb {
+                    continue;
+                }
+                succ_cnt += 1;
+
+                data.dfg_mut().replace_value_with(pred_terminator_val).branch_with_args(
+                    branch.cond(),
+                    true_bb,
+                    false_bb,
+                    true_args,
+                    false_args,
+                );
+            }
+            _ => unreachable!(),
+        };
+    }
+
+    if succ_cnt == preds.len() {
+        if let Some((_, node)) = data.layout_mut().bbs_mut().remove(&empty_bb) {
+            for (inst, _) in node.insts().iter() {
+                safely_remove_inst_from_dfg(data.dfg_mut(), *inst);
+            }
+        }
+        data.dfg_mut().remove_bb(empty_bb);
+    }
+
+    succ_cnt != 0
 }
 
 #[cfg(test)]
@@ -211,8 +356,9 @@ mod tests {
         }
         "#;
 
-        // 验证：没有任何块被删除，数量保持 8
-        assert_eq!(apply_pass_and_count_bbs(ir), 8);
+        // init_a was removed
+        // but init_b could not be removed because branch inst cannot have two same block in koopa
+        assert_eq!(apply_pass_and_count_bbs(ir), 7);
     }
 
     #[test]
@@ -255,7 +401,7 @@ mod tests {
         }
         "#;
 
-        assert_eq!(apply_pass_and_count_bbs(ir), 8);
+        assert_eq!(apply_pass_and_count_bbs(ir), 7);
     }
 
     #[test]
@@ -294,7 +440,7 @@ mod tests {
         }
         "#;
 
-        assert_eq!(apply_pass_and_count_bbs(ir), 4);
+        assert_eq!(apply_pass_and_count_bbs(ir), 3);
     }
 
     #[test]
@@ -325,7 +471,7 @@ mod tests {
           ret %ret_val
         }
         "#;
-        assert_eq!(apply_pass_and_count_bbs(ir), 4);
+        assert_eq!(apply_pass_and_count_bbs(ir), 3);
     }
 
     #[test]
@@ -372,8 +518,8 @@ mod tests {
         // %entry merges with %bb1 (1 block).
         // %bb1 has multiple successors, so it cannot merge with %bb2 or %bb3.
         // %exit has multiple predecessors, so %bb2 and %bb3 cannot merge into %exit.
-        // Total expected blocks: 4 (merged entry+bb1, bb2, bb3, exit)
-        assert_eq!(apply_pass_and_count_bbs(ir), 4);
+        // Total expected blocks: 4 (merged entry+bb1+bb2, bb3, exit)
+        assert_eq!(apply_pass_and_count_bbs(ir), 3);
     }
 
     #[test]
@@ -411,7 +557,7 @@ mod tests {
           ret %11
         }
         "#;
-        assert_eq!(apply_pass_and_count_bbs(ir), 4);
+        assert_eq!(apply_pass_and_count_bbs(ir), 3);
     }
 
     #[test]
