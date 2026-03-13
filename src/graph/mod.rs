@@ -1,6 +1,7 @@
 pub mod dom_tree;
 pub mod graphviz;
 pub mod loops;
+pub mod reachable;
 pub mod scalar_evolution;
 pub mod terminator;
 pub mod traverse;
@@ -10,8 +11,10 @@ use koopa::ir::BasicBlock;
 pub trait DirectedGraph {
     type Node: Copy + PartialEq + Eq + core::hash::Hash + core::fmt::Debug;
 
+    /// num of nodes in the graph
     fn num_nodes(&self) -> usize;
 
+    /// an iterator over all the ndoes in the graph
     fn nodes_iter(&self) -> impl Iterator<Item = Self::Node>;
 }
 
@@ -21,7 +24,7 @@ impl DirectedGraph for koopa::ir::FunctionData {
     fn num_nodes(&self) -> usize {
         self.dfg().bbs().len()
     }
-    
+
     fn nodes_iter(&self) -> impl Iterator<Item = Self::Node> {
         self.dfg().bbs().keys().cloned()
     }
@@ -33,7 +36,13 @@ pub trait Predecessors: DirectedGraph {
 
 impl Predecessors for koopa::ir::FunctionData {
     fn preds(&self, cur: Self::Node) -> impl Iterator<Item = Self::Node> {
-        self.dfg().bb(cur).used_by().iter().filter_map(|v| self.layout().parent_bb(*v))
+        let mut res: smallvec::SmallVec<[Self::Node; 3]> = smallvec::SmallVec::new();
+        for bb in self.dfg().bb(cur).used_by().iter().filter_map(|v| self.layout().parent_bb(*v)) {
+            if !res.contains(&bb) {
+                res.push(bb);
+            }
+        }
+        res.into_iter()
     }
 }
 

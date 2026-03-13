@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 indexmap = "2.13.0"
 koopa = "0.0.9"
+rustc-hash = "2.1.1"
 smallvec = "1.15.1"
 
 [dev-dependencies]
