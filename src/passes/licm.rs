@@ -16,7 +16,9 @@ pub struct LICM;
 ///     2. fixed point iteration
 impl FunctionPass for LICM {
     fn run_on(&mut self, _func: koopa::ir::Function, data: &mut koopa::ir::FunctionData) {
-        let entry = data.layout().entry_bb().unwrap();
+        let Some(entry) = data.layout().entry_bb() else {
+            return;
+        };
         let dom_tree = DomTree::build(entry, data);
         let mut loops = LoopsAnalysis::new();
         loops.compute(data, entry, &dom_tree);
