@@ -43,7 +43,10 @@ impl TerminatorExt for FunctionData {
         let bb_node = self.layout().bbs().node(&bb).unwrap();
         let value = *bb_node.insts().iter().last().unwrap().0;
         let data = self.dfg().value(value).clone();
-        assert!(matches!(data.kind(), ValueKind::Branch(_) | ValueKind::Jump(_)));
+        assert!(matches!(
+            data.kind(),
+            ValueKind::Branch(_) | ValueKind::Jump(_) | ValueKind::Return(_)
+        ));
         (value, data)
     }
 }
