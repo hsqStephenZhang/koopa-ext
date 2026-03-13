@@ -9,7 +9,7 @@ use crate::graph::loops::LoopsAnalysis;
 use crate::graph::terminator::TerminatorExt;
 
 /// This pass Will transform loops into a simplier/canonical form
-/// to make the life of other loop ralated passes easier
+/// to make the life of other loop related passes easier
 ///
 /// reference:
 ///     https://llvm.org/docs/LoopTerminology.html
@@ -20,9 +20,9 @@ use crate::graph::terminator::TerminatorExt;
 ///     2. A single backedge (which implies that there is a single latch).
 ///     3. Dedicated exits. That is, no exit block for the loop has a predecessor that is outside the loop.
 ///  This implies that all exit blocks are dominated by the loop header.
-pub struct LoopSimpliy;
+pub struct LoopSimplify;
 
-impl FunctionPass for LoopSimpliy {
+impl FunctionPass for LoopSimplify {
     fn run_on(&mut self, _func: koopa::ir::Function, data: &mut koopa::ir::FunctionData) {
         let Some(entry) = data.layout().entry_bb() else {
             return;
@@ -61,7 +61,7 @@ impl FunctionPass for LoopSimpliy {
 
                 // the header has no predecessor
                 // there are two possibilities:
-                // 1. it's entry block. we need to simpliy create an new entry block and jump to header.
+                // 1. it's entry block. we need to simplify create an new entry block and jump to header.
                 //    **But that's forbidden in IR, since entry cannot have any preds**
                 // 2. it's an unreachable loop's header. let's simply ignore the case.
                 if let (Some(parent), Some(bb)) = (loops.loops()[&lp].parent(), preheader) {
@@ -182,7 +182,7 @@ mod tests {
     use koopa::opt::FunctionPass;
 
     use crate::graph::Predecessors;
-    use crate::passes::simplify_loop::LoopSimpliy;
+    use crate::passes::simplify_loop::LoopSimplify;
 
     #[test]
     fn test_simple() {
@@ -223,7 +223,7 @@ fun @test(%cond1: i32, %cond2: i32): i32 {
         let driver: Driver<_> = src.into();
         let mut prog = driver.generate_program().unwrap();
         let (func, data) = prog.funcs_mut().iter_mut().find(|bb| bb.1.name() == "@test").unwrap();
-        let mut lp_simplify = LoopSimpliy;
+        let mut lp_simplify = LoopSimplify;
         lp_simplify.run_on(*func, data);
 
         let mut visitor = KoopaVisitor;
@@ -279,7 +279,7 @@ fun @test(%cond1: i32, %cond2: i32): i32 {
         let mut prog = driver.generate_program().unwrap();
         let (func, data) = prog.funcs_mut().iter_mut().find(|bb| bb.1.name() == "@test").unwrap();
 
-        let mut lp_simplify = LoopSimpliy;
+        let mut lp_simplify = LoopSimplify;
         lp_simplify.run_on(*func, data);
 
         let preheader = find_bb(data, "%loop_header_preheader").expect("Should generate preheader");
@@ -335,7 +335,7 @@ fun @test_exit(%cond1: i32, %cond2: i32): i32 {
         let (func, data) =
             prog.funcs_mut().iter_mut().find(|bb| bb.1.name() == "@test_exit").unwrap();
 
-        let mut lp_simplify = LoopSimpliy;
+        let mut lp_simplify = LoopSimplify;
         lp_simplify.run_on(*func, data);
 
         let dedicate_exit = find_bb(data, "%dedicate_exit").expect("Should generate dedicate exit");
@@ -384,7 +384,7 @@ fun @test_nested(%cond: i32): i32 {
         let (func, data) =
             prog.funcs_mut().iter_mut().find(|bb| bb.1.name() == "@test_nested").unwrap();
 
-        let mut lp_simplify = LoopSimpliy;
+        let mut lp_simplify = LoopSimplify;
         lp_simplify.run_on(*func, data);
 
         let inner_preheader =

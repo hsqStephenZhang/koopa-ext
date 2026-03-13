@@ -19,5 +19,5 @@ this crate offers a wide range of utilities missed by koopa, including
 - [ ] alias analysis
 - [ ] inliner
 - [ ] gvn
-- [ ] Loop Simpliy
+- [x] Loop Simplify
 - [ ] Loop Unroll

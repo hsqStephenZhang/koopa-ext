@@ -14,7 +14,7 @@ pub trait DirectedGraph {
     /// num of nodes in the graph
     fn num_nodes(&self) -> usize;
 
-    /// an iterator over all the ndoes in the graph
+    /// an iterator over all the nodes in the graph
     fn nodes_iter(&self) -> impl Iterator<Item = Self::Node>;
 }
 

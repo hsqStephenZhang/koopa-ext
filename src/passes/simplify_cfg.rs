@@ -13,7 +13,7 @@ use crate::utils::{replace_operands, safely_remove_inst_from_dfg};
 /// will:
 ///     1. remove unreachable BBs
 ///     2. merge a BB to its predecessor if it has only one predecessor
-///         and its predecessor has only one sucessor
+///         and its predecessor has only one successor
 ///     3. eliminate BBs that has no instruction other than an jump(unconditional)
 ///     
 pub struct SimplifyCFG;
@@ -52,7 +52,7 @@ impl FunctionPass for SimplifyCFG {
         }
 
         // 2. merge a BB to its predecessor if it has only one predecessor
-        //    and its predecessor has only one sucessor
+        //    and its predecessor has only one successor
         loop {
             let mut changed = false;
 
