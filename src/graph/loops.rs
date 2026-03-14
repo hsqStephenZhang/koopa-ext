@@ -84,6 +84,10 @@ impl<N: PartialEq + Eq + Hash + Copy + Debug> LoopsAnalysis<N> {
         &self.bb_to_loop
     }
 
+    pub fn loop_of(&self, bb: N) -> Option<Loop> {
+        self.bb_to_loop.get(&bb).copied()
+    }
+
     pub fn compute<G: DirectedGraph<Node = N> + Graph>(
         &mut self,
         graph: &G,

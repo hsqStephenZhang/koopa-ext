@@ -11,6 +11,28 @@ pub enum TerminatorKind {
     Return(values::Return),
 }
 
+impl TerminatorKind {
+    pub fn params(&self, target: BasicBlock) -> Option<Vec<Value>> {
+        let mut res = vec![];
+        match self {
+            TerminatorKind::Branch(branch) => {
+                assert!(branch.true_bb() == target || branch.false_bb() == target);
+                if branch.true_bb() == target {
+                    res.extend(branch.true_args());
+                } else {
+                    res.extend(branch.false_args());
+                }
+            }
+            TerminatorKind::Jump(jump) => {
+                assert!(jump.target() == target);
+                res.extend(jump.args());
+            }
+            TerminatorKind::Return(_) => return None,
+        }
+        Some(res)
+    }
+}
+
 impl TryFrom<ValueKind> for TerminatorKind {
     type Error = ();
 

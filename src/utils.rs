@@ -1,9 +1,11 @@
 use std::collections::HashMap;
 
-use koopa::ir::Value;
 use koopa::ir::builder::ValueBuilder;
 use koopa::ir::dfg::DataFlowGraph;
 use koopa::ir::entities::ValueData;
+use koopa::ir::{BasicBlock, FunctionData, Value, ValueKind};
+
+use crate::graph::loops::{Loop, LoopsAnalysis};
 
 /// unlink the inst and safely remove it from the
 pub fn safely_remove_inst_from_dfg(dfg: &mut DataFlowGraph, value: Value) {
@@ -94,4 +96,38 @@ pub fn replace_operands<V: ValuesVisit<Output = ()>>(
     };
     data.visit(replacer);
     changed
+}
+
+/// returns if the `value` is a loop invariant
+pub fn is_loop_invariant(
+    data: &FunctionData,
+    lp: Loop,
+    loops: &LoopsAnalysis<BasicBlock>,
+    value: Value,
+) -> bool {
+    match data.layout().parent_bb(value) {
+        Some(bb) => !loops.contains(lp, bb),
+        None => data
+            .dfg()
+            .values()
+            .get(&value)
+            .map(|data| matches!(data.kind(), ValueKind::FuncArgRef(_) | ValueKind::GlobalAlloc(_)))
+            .unwrap_or_default(),
+    }
+}
+
+pub trait FunctionDataExt {
+    fn get_value_by_name(&self, name: &str) -> Option<Value>;
+
+    fn get_bb_by_name(&self, name: &str) -> Option<BasicBlock>;
+}
+
+impl FunctionDataExt for FunctionData {
+    fn get_value_by_name(&self, name: &str) -> Option<Value> {
+        self.dfg().values().iter().find(|(_, v)| v.name().as_deref() == Some(name)).map(|(k, _)| *k)
+    }
+
+    fn get_bb_by_name(&self, name: &str) -> Option<BasicBlock> {
+        self.dfg().bbs().iter().find(|(_, v)| v.name().as_deref() == Some(name)).map(|(k, _)| *k)
+    }
 }
