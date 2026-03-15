@@ -82,6 +82,7 @@ pub struct AffineAddRec {
     pub step: InVarExpr,
 }
 
+#[allow(clippy::should_implement_trait)]
 impl AffineAddRec {
     pub fn new(base: InVarExpr, step: InVarExpr) -> Self {
         Self { base, step }
@@ -143,6 +144,7 @@ impl InVarExpr {
         }
     }
 
+    #[allow(clippy::should_implement_trait)]
     pub fn neg(self) -> Self {
         Self::Neg(Box::new(self))
     }
@@ -198,6 +200,12 @@ pub struct ScalarEvolutionAnalysis {
     info: FxHashMap<Loop, FxHashMap<Value, AffineAddRec>>,
 }
 
+impl Default for ScalarEvolutionAnalysis {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ScalarEvolutionAnalysis {
     pub fn new() -> Self {
         Self { info: Default::default() }
@@ -230,7 +238,7 @@ impl ScalarEvolutionAnalysis {
             let params = data.dfg().bb(header).params();
             // we wish to tell which BB param could be represented as an `AffineAddRec`
             for ((base, &param), next) in base_args.into_iter().zip(params).zip(latch_args) {
-                let Some(base) = Self::get_loop_invariant(data, lp, &loops, base) else {
+                let Some(base) = Self::get_loop_invariant(data, lp, loops, base) else {
                     continue;
                 };
                 let step: Option<InVarExpr> = match data.dfg().value(next).kind() {
@@ -243,7 +251,7 @@ impl ScalarEvolutionAnalysis {
                         {
                             let step =
                                 if binary.lhs() == param { binary.rhs() } else { binary.lhs() };
-                            Self::get_loop_invariant(data, lp, &loops, step)
+                            Self::get_loop_invariant(data, lp, loops, step)
                         } else {
                             None
                         }
@@ -316,7 +324,7 @@ impl ScalarEvolutionAnalysis {
             .map(|v| v.kind());
         if value_kind.map(|v| v.is_const()).unwrap_or_default() {
             Some(InVarExpr::Constant(Constant::try_from(value_kind.unwrap()).unwrap()))
-        } else if is_loop_invariant(data, lp, &loops, value) {
+        } else if is_loop_invariant(data, lp, loops, value) {
             Some(InVarExpr::Value(value))
         } else {
             None

@@ -181,10 +181,7 @@ impl ModulePass for Inliner {
                             .func(f)
                             .dfg()
                             .bb(new_bb)
-                            .params()
-                            .iter()
-                            .copied()
-                            .collect::<Vec<_>>();
+                            .params().to_vec();
                         let old_params = if old_bb == old_entry {
                             program.func(target_func).params().to_vec()
                         } else {
@@ -192,10 +189,7 @@ impl ModulePass for Inliner {
                                 .func(target_func)
                                 .dfg()
                                 .bb(old_bb)
-                                .params()
-                                .iter()
-                                .copied()
-                                .collect::<Vec<_>>()
+                                .params().to_vec()
                         };
 
                         for (op, np) in old_params.into_iter().zip(created_params) {
@@ -247,7 +241,7 @@ impl Inliner {
 
     pub fn should_inline(&mut self, func: Function, data: &FunctionData) -> bool {
         if let Some(res) = self.should_inline.get(&func) {
-            return *res;
+            *res
         } else {
             let res = Self::should_inline_inner(func, data);
             self.should_inline.insert(func, res);

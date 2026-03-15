@@ -140,6 +140,7 @@ pub fn is_loop_invariant(
 /// so if you wish to handle some inst like `alloc` mannually,
 /// you could insert the mapping before calling this function.
 /// 
+#[allow(clippy::too_many_arguments)]
 pub fn clone_bb(
     prog: &mut Program,
     from_func: Function,
@@ -223,6 +224,7 @@ fn clone_operand(
     new_op
 }
 
+#[allow(clippy::too_many_arguments)]
 fn clone_instruction(
     prog: &mut Program,
     from_func: Function,
