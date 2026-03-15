@@ -177,19 +177,11 @@ impl ModulePass for Inliner {
                         program.func_mut(f).layout_mut().bbs_mut().push_key_back(new_bb).unwrap();
                         bb_map.insert(old_bb, new_bb);
 
-                        let created_params = program
-                            .func(f)
-                            .dfg()
-                            .bb(new_bb)
-                            .params().to_vec();
+                        let created_params = program.func(f).dfg().bb(new_bb).params().to_vec();
                         let old_params = if old_bb == old_entry {
                             program.func(target_func).params().to_vec()
                         } else {
-                            program
-                                .func(target_func)
-                                .dfg()
-                                .bb(old_bb)
-                                .params().to_vec()
+                            program.func(target_func).dfg().bb(old_bb).params().to_vec()
                         };
 
                         for (op, np) in old_params.into_iter().zip(created_params) {
@@ -382,6 +374,30 @@ fun @test_alloc(): i32 {
     %result = call @foo()
     %final = mul %result, 2
     ret %final
+}
+        "#;
+        apply_pass(ir, true, true);
+    }
+
+    #[test]
+    fn test_global() {
+        let ir = r#"
+global @x = alloc [i32, 10], zeroinit
+
+fun @test(@i: i32): i32 {
+%entry:
+    %0 = getptr @x, 0
+    store {1, 2, 3, 4, 5, 0, 0, 0, 0, 10}, %0
+    %1 = getelemptr @x, @i
+    %2 = load %1
+    %3 = mul %2, 7
+    ret %3
+}
+
+fun @main(): i32 {
+%entry:
+    %val = call @test(1)
+    ret %val
 }
         "#;
         apply_pass(ir, true, true);
