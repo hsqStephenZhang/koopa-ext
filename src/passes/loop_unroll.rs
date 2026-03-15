@@ -13,7 +13,6 @@
 //         let mut loops = LoopsAnalysis::new();
 //         loops.compute(data, entry, &dom_tree);
 
-        
 //         // start from the inner loop
 //         for lp in loops.bottom_up() {
 

@@ -9,7 +9,7 @@ pub trait FunctionDataExt {
 
     fn inst_count(&self) -> usize;
 
-    fn all_bbs(&self) -> Vec<BasicBlock>; 
+    fn all_bbs(&self) -> Vec<BasicBlock>;
 }
 
 impl FunctionDataExt for FunctionData {
@@ -30,7 +30,7 @@ impl FunctionDataExt for FunctionData {
 
         cnt
     }
-    
+
     fn all_bbs(&self) -> Vec<BasicBlock> {
         self.nodes_iter().collect()
     }

@@ -135,11 +135,11 @@ pub fn is_loop_invariant(
 
 /// clone a basic block, replace the operand used in the insts by the `vmap`
 /// will update `vmap` with the old -> new instruction mapping
-/// 
+///
 /// it will skip the instruction that is already contained in vmap,
 /// so if you wish to handle some inst like `alloc` mannually,
 /// you could insert the mapping before calling this function.
-/// 
+///
 #[allow(clippy::too_many_arguments)]
 pub fn clone_bb(
     prog: &mut Program,
