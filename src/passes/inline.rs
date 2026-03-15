@@ -1,10 +1,10 @@
-use koopa::ir::builder::{BasicBlockBuilder, LocalInstBuilder};
-use koopa::ir::{Function, FunctionData, ValueKind};
+use koopa::ir::builder::{BasicBlockBuilder, LocalInstBuilder, ValueBuilder};
+use koopa::ir::{Function, FunctionData, TypeKind, ValueKind};
 use koopa::opt::ModulePass;
 use rustc_hash::FxHashMap;
 
 use crate::ext::FunctionDataExt;
-use crate::utils::{clone_bb, clone_instruction_in_same_func};
+use crate::utils::clone_bb;
 
 #[derive(Default)]
 pub struct Inliner {
@@ -47,6 +47,7 @@ impl ModulePass for Inliner {
                         _ => continue,
                     };
 
+                    let new_entry = program.func(f).layout().entry_bb().unwrap();
                     let ret_ty = program.func(f).dfg().value(inst).ty().clone();
 
                     let mut vmap = call_args
@@ -64,11 +65,14 @@ impl ModulePass for Inliner {
                         .as_deref()
                         .map(|n| format!("{}_after", n));
 
+                    let after_bb_params =
+                        if ret_ty.is_unit() { vec![] } else { vec![ret_ty.clone()] };
+
                     let after_bb = program
                         .func_mut(f)
                         .dfg_mut()
                         .new_bb()
-                        .basic_block_with_params(after_bb_name, vec![ret_ty]);
+                        .basic_block_with_params(after_bb_name, after_bb_params);
 
                     program.func_mut(f).layout_mut().bbs_mut().push_key_back(after_bb).unwrap();
 
@@ -81,46 +85,63 @@ impl ModulePass for Inliner {
                         cursor.remove_current();
                     }
 
-                    // moved[0] is the call itself; drop it from layout.
-                    let mut vmap_bb_after = FxHashMap::default();
-                    vmap_bb_after.insert(inst, program.func(f).dfg().bb(after_bb).params()[0]);
-                    for m in moved.into_iter().skip(1) {
-                        // TODO: fix instructions in `after_bb`,
-                        let cloned_m = clone_instruction_in_same_func(
-                            program.func_mut(f),
-                            &mut vmap_bb_after,
-                            m,
+                    // `moved[0]` is the call itself. We retain its SSA ID, but redefine it to return
+                    // the parameter piped into `after_bb` (add %param, 0).
+                    // This way we organically avoid "cloning" usages & gracefully RAUW cross-block uses!
+                    if ret_ty.is_i32() {
+                        let param = program.func(f).dfg().bb(after_bb).params()[0];
+                        let zero = program.func_mut(f).dfg_mut().new_value().integer(0);
+                        program.func_mut(f).dfg_mut().replace_value_with(inst).binary(
+                            koopa::ir::BinaryOp::Add,
+                            param,
+                            zero,
                         );
                         program
                             .func_mut(f)
                             .layout_mut()
                             .bb_mut(after_bb)
                             .insts_mut()
-                            .push_key_back(cloned_m)
+                            .push_key_back(inst)
+                            .unwrap();
+                    } else if matches!(ret_ty.kind(), TypeKind::Pointer(_)) {
+                        let param = program.func(f).dfg().bb(after_bb).params()[0];
+                        let zero = program.func_mut(f).dfg_mut().new_value().integer(0);
+                        program.func_mut(f).dfg_mut().replace_value_with(inst).get_ptr(param, zero);
+                        program
+                            .func_mut(f)
+                            .layout_mut()
+                            .bb_mut(after_bb)
+                            .insts_mut()
+                            .push_key_back(inst)
+                            .unwrap();
+                    }
+
+                    // For the rest of instructions natively MOVE them (no clone IDs!)
+                    // which flawlessly keeps variables in-sync across other branches!
+                    for m in moved.into_iter().skip(1) {
+                        program
+                            .func_mut(f)
+                            .layout_mut()
+                            .bb_mut(after_bb)
+                            .insts_mut()
+                            .push_key_back(m)
                             .unwrap();
                     }
 
                     bbs.push(after_bb);
 
-                    // 2) alloc handling
-                    let old_entry = program.func(target_func).layout().entry_bb().unwrap();
-                    let new_entry = program.func(f).layout().entry_bb().unwrap();
-                    let target_allocs = program
-                        .func(target_func)
-                        .layout()
-                        .bbs()
-                        .node(&old_entry)
-                        .unwrap()
-                        .insts()
-                        .keys()
-                        .copied()
-                        .filter(|&i| {
-                            matches!(
+                    // 2) alloc handling (capture targets across all cloned BBs optimally)
+                    let mut target_allocs = vec![];
+                    for (_, node) in program.func(target_func).layout().bbs() {
+                        for &i in node.insts().keys() {
+                            if matches!(
                                 program.func(target_func).dfg().value(i).kind(),
                                 ValueKind::Alloc(_)
-                            )
-                        })
-                        .collect::<Vec<_>>();
+                            ) {
+                                target_allocs.push(i);
+                            }
+                        }
+                    }
 
                     let mut new_allocs = Vec::new();
                     for old_alloc in target_allocs {
@@ -129,7 +150,6 @@ impl ModulePass for Inliner {
                             koopa::ir::TypeKind::Pointer(base) => base.clone(),
                             _ => unreachable!("alloc value must be a pointer"),
                         };
-                        dbg!(&elem_ty);
                         let new_alloc = program.func_mut(f).dfg_mut().new_value().alloc(elem_ty);
                         vmap.insert(old_alloc, new_alloc);
                         new_allocs.push(new_alloc);
@@ -142,6 +162,7 @@ impl ModulePass for Inliner {
                     }
 
                     // 3-4) pre-create target entry + other bbs map
+                    let old_entry = program.func(target_func).layout().entry_bb().unwrap();
                     let old_bbs = program.func(target_func).all_bbs();
                     let mut bb_map = FxHashMap::default();
 
@@ -150,7 +171,6 @@ impl ModulePass for Inliner {
                         let new_name = old_name.map(|n| format!("{}_clone", n));
 
                         let new_param_tys = if old_bb == old_entry {
-                            // Entry uses target func's parameter types
                             program
                                 .func(target_func)
                                 .params()
@@ -158,7 +178,6 @@ impl ModulePass for Inliner {
                                 .map(|&p| program.func(target_func).dfg().value(p).ty().clone())
                                 .collect::<Vec<_>>()
                         } else {
-                            // Others use block's self parameter types
                             program
                                 .func(target_func)
                                 .dfg()
@@ -205,13 +224,13 @@ impl ModulePass for Inliner {
                     }
 
                     // finish step 1): replace original `call` site with jump to cloned entry
-                    let new_entry = bb_map[&old_entry];
+                    let new_entry_clone = bb_map[&old_entry];
 
                     let jump_to_inlined = program
                         .func_mut(f)
                         .dfg_mut()
                         .new_value()
-                        .jump_with_args(new_entry, call_args);
+                        .jump_with_args(new_entry_clone, call_args);
 
                     program
                         .func_mut(f)
@@ -382,22 +401,178 @@ fun @test_alloc(): i32 {
     #[test]
     fn test_global() {
         let ir = r#"
-global @x = alloc [i32, 10], zeroinit
+decl @getint(): i32
 
-fun @test(@i: i32): i32 {
+decl @getch(): i32
+
+decl @getarray(*i32): i32
+
+decl @putint(i32)
+
+decl @putch(i32)
+
+decl @putarray(i32, *i32)
+
+decl @starttime(): i32
+
+decl @stoptime(): i32
+
+fun @add(@a: i32, @b: i32): i32 {
 %entry:
-    %0 = getptr @x, 0
-    store {1, 2, 3, 4, 5, 0, 0, 0, 0, 10}, %0
-    %1 = getelemptr @x, @i
-    %2 = load %1
-    %3 = mul %2, 7
-    ret %3
+  %a = alloc i32
+  store @a, %a
+  %b = alloc i32
+  store @b, %b
+  jump %0
+
+%0:
+  %1 = load %a
+  %2 = load %b
+  %3 = add %1, %2
+  ret %3
+
+%4:
+  ret 0
+}
+
+fun @sub(@a: i32, @b: i32): i32 {
+%entry:
+  %a = alloc i32
+  store @a, %a
+  %b = alloc i32
+  store @b, %b
+  jump %5
+
+%5:
+  %6 = load %a
+  %7 = load %b
+  %8 = sub %6, %7
+  ret %8
+
+%9:
+  ret 0
+}
+
+fun @mul(@a: i32, @b: i32): i32 {
+%entry:
+  %a = alloc i32
+  store @a, %a
+  %b = alloc i32
+  store @b, %b
+  jump %10
+
+%10:
+  %11 = load %a
+  %12 = load %b
+  %13 = mul %11, %12
+  ret %13
+
+%14:
+  ret 0
+}
+
+fun @div(@a: i32, @b: i32): i32 {
+%entry:
+  %a = alloc i32
+  store @a, %a
+  %b = alloc i32
+  store @b, %b
+  jump %15
+
+%15:
+  %16 = load %a
+  %17 = load %b
+  %18 = div %16, %17
+  ret %18
+
+%19:
+  ret 0
 }
 
 fun @main(): i32 {
 %entry:
-    %val = call @test(1)
-    ret %val
+  %20 = call @sub(1, 2)
+  %21 = call @div(4, 5)
+  %22 = call @mul(3, %21)
+  %23 = call @add(%20, %22)
+  %x = alloc i32
+  store %23, %x
+  %24 = ne 0, 0
+  %25 = alloc i32
+  store %24, %25
+  br %24, %and_else, %26
+
+%and_else:
+  %27 = load %x
+  %28 = call @sub(1, %27)
+  %29 = ne %28, 0
+  store %29, %25
+  jump %26
+
+%26:
+  %30 = load %25
+  %31 = ne %30, 0
+  %32 = alloc i32
+  store %31, %32
+  br %31, %33, %or_else
+
+%or_else:
+  %34 = load %x
+  %35 = ne %34, 0
+  %36 = alloc i32
+  store %35, %36
+  br %35, %37, %or_else_0
+
+%or_else_0:
+  %38 = call @add(1, 2)
+  %39 = gt %38, 10
+  %40 = ne 0, %39
+  store %40, %36
+  jump %37
+
+%37:
+  %41 = load %36
+  %42 = call @div(%41, 5)
+  %43 = call @mul(3, %42)
+  %44 = ne 0, %43
+  store %44, %32
+  jump %33
+
+%33:
+  %45 = load %32
+  %46 = call @add(1, %45)
+  %y = alloc i32
+  store %46, %y
+  %47 = load %x
+  %48 = load %y
+  %49 = add %47, %48
+  ret %49
+
+%50:
+  ret 0
+}
+        "#;
+        apply_pass(ir, true, true);
+    }
+
+    #[test]
+    fn test_empty() {
+        let ir = r#"
+fun @f(): i32 {
+%entry:
+  ret 0
+
+%0:
+  ret 0
+}
+
+fun @main(): i32 {
+%entry:
+  %1 = call @f()
+  ret %1
+
+%2:
+  ret 0
 }
         "#;
         apply_pass(ir, true, true);

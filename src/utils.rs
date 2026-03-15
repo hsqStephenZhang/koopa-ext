@@ -257,8 +257,6 @@ fn clone_instruction(
         ValueKind::Store(store) => {
             let val = clone_operand(prog, from_func, to_func, vmap, store.value());
             let dest = clone_operand(prog, from_func, to_func, vmap, store.dest());
-            dbg!(prog.func(to_func).dfg().value(val).ty());
-            dbg!(prog.func(to_func).dfg().value(dest).ty());
             prog.func_mut(to_func).dfg_mut().new_value().store(val, dest)
         }
         ValueKind::GetPtr(get_ptr) => {
