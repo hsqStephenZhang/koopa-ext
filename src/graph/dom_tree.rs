@@ -70,6 +70,10 @@ impl<N: PartialEq + Eq + Hash + Copy> DomTree<N> {
         &self.root
     }
 
+    pub fn strict_dominates(&self, a: N, b: N) -> bool {
+        a != b && self.dominates(a, b)
+    }
+
     pub fn dominates(&self, a: N, mut b: N) -> bool {
         if a == b {
             return true;
