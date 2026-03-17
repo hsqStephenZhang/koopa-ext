@@ -11,5 +11,6 @@ pub use dce::DeadCodeElimination;
 pub use gvn::GVN;
 pub use inline::Inliner;
 pub use licm::LICM;
+pub use sccp::SCCP;
 pub use simplify_cfg::SimplifyCFG;
 pub use simplify_loop::LoopSimplify;

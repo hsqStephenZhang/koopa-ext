@@ -16,6 +16,8 @@ pub trait FunctionDataExt {
     fn try_eval_i32(&self, value: Value) -> Option<i32>;
 
     fn bb_of_arg(&self, arg: Value) -> Option<BasicBlock>;
+
+    fn has(&self, value: Value) -> bool;
 }
 
 impl FunctionDataExt for FunctionData {
@@ -46,6 +48,10 @@ impl FunctionDataExt for FunctionData {
         }
         None
     }
+
+    fn has(&self, value: Value) -> bool {
+        self.dfg().values().get(&value).is_some()
+    }
 }
 
 /// unlink the inst and safely remove it from the
@@ -54,7 +60,9 @@ pub fn safely_remove_inst_from_dfg(dfg: &mut DataFlowGraph, value: Value) {
     if !ty.is_unit() {
         dfg.replace_value_with(value).undef(ty);
     }
-    dfg.remove_value(value);
+    if dfg.value(value).used_by().is_empty() {
+        dfg.remove_value(value);
+    }
 }
 
 pub trait ValuesVisit {

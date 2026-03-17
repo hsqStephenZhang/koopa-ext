@@ -7,7 +7,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 
 use crate::analysis::{FlattenValue, MeetSemiLattice};
-use crate::utils::{FunctionDataExt, replace_operands, safely_remove_inst_from_dfg};
+use crate::utils::{FunctionDataExt, replace_operands};
 
 /// Specifically, this:
 ///   * Assumes values are constant unless proven otherwise
@@ -20,6 +20,7 @@ pub struct SCCP {
     executable_bbs: FxHashSet<BasicBlock>,
 
     /// domain2
+    /// all values in this map should belong to `koopa::ir::FunctionData`
     /// FlattenValue::Top : unknown const
     /// FlattenValue::Concrete : known const
     /// FlattenValue::Bottom : not a constant
@@ -70,6 +71,9 @@ impl SCCP {
     }
 
     fn handle_value(&mut self, value: Value, data: &koopa::ir::FunctionData) {
+        if !data.has(value) {
+            return;
+        }
         let new_value = match data.dfg().value(value).kind() {
             ValueKind::Integer(integer) => FlattenValue::Concrete(integer.value()),
             ValueKind::ZeroInit(_) => FlattenValue::Concrete(0),
@@ -205,6 +209,10 @@ impl SCCP {
         let mut block_args: HashMap<BasicBlock, SmallVec<[usize; 4]>, _> = FxHashMap::default();
 
         for (&value, lat) in &self.values {
+            // only handle local values
+            if !data.has(value) {
+                continue;
+            }
             if let FlattenValue::Concrete(c) = lat {
                 let new_value = data.dfg_mut().new_value().integer(*c);
                 let kind = data.dfg().value(value).kind();
@@ -218,6 +226,9 @@ impl SCCP {
         }
 
         for value in v_map.keys().copied() {
+            if !data.has(value) {
+                continue;
+            }
             for usage in data.dfg().value(value).used_by().clone() {
                 // should replace branch with jump
                 if let ValueKind::Branch(branch) = data.dfg().value(usage).kind() {
@@ -225,14 +236,14 @@ impl SCCP {
                     let (target, args) = if *value != 0 {
                         (branch.true_bb(), branch.true_args().to_vec())
                     } else {
-                        (branch.true_bb(), branch.true_args().to_vec())
+                        (branch.false_bb(), branch.false_args().to_vec())
                     };
                     data.dfg_mut().replace_value_with(usage).jump_with_args(target, args);
-                    continue;
+                } else {
+                    let mut value_kind = data.dfg().value(usage).clone();
+                    assert!(replace_operands(&mut value_kind, &v_map));
+                    data.dfg_mut().replace_value_with(usage).raw(value_kind);
                 }
-                let mut value_kind = data.dfg().value(usage).clone();
-                assert!(replace_operands(&mut value_kind, &v_map));
-                data.dfg_mut().replace_value_with(usage).raw(value_kind);
             }
 
             if let Some(parent_bb) = data.layout().parent_bb(value) {
@@ -297,20 +308,63 @@ impl SCCP {
             .copied()
             .collect::<Vec<_>>();
 
-        let mut removed_insts: Vec<Value> = vec![];
+        let mut removed_insts: HashMap<Value, Value> = HashMap::new();
         for bb in &unreachable_bbs {
+            dbg!(data.dfg().bb(*bb).name());
             if let Some((_, node)) = data.layout_mut().bbs_mut().remove(bb) {
-                for (inst, _) in node.insts().iter() {
-                    removed_insts.push(*inst);
+                for &inst in node.insts().keys() {
+                    let ty = data.dfg().value(inst).ty().clone();
+                    if !ty.is_unit() {
+                        let undef = data.dfg_mut().new_value().undef(ty);
+                        removed_insts.insert(inst, undef);
+                    }
                 }
             }
         }
 
-        for inst in &removed_insts {
-            safely_remove_inst_from_dfg(data.dfg_mut(), *inst);
+        for &inst in removed_insts.keys() {
+            for usage in data.dfg().value(inst).used_by().clone() {
+                let mut value_kind = data.dfg().value(usage).clone();
+                assert!(replace_operands(&mut value_kind, &removed_insts));
+                data.dfg_mut().replace_value_with(usage).raw(value_kind);
+            }
+        }
+
+        for &inst in removed_insts.keys() {
+            data.dfg_mut().remove_value(inst);
         }
 
         for &bb in &unreachable_bbs {
+            let usages = data.dfg().bb(bb).used_by().clone();
+
+            for terminator in usages {
+                match data.dfg().value(terminator).kind() {
+                    ValueKind::Branch(branch) => {
+                        let (target, args) = if branch.true_bb() == bb {
+                            (branch.false_bb(), branch.false_args().to_vec())
+                        } else {
+                            (branch.true_bb(), branch.true_args().to_vec())
+                        };
+                        data.dfg_mut().replace_value_with(terminator).jump_with_args(target, args);
+                    }
+                    ValueKind::Jump(_) => {
+                        // if `bb` is unreachable, **then the user bbs are also unreachable**
+                        // **so we could replace the terminator with any instruction we like**
+                        // we chose to replace with an `ret %undef_value` or simpliy an empty `ret`
+                        // because the usage/reference of current `bb` will hinder us from
+                        // removing them because koopa will check the usage before actually
+                        // deleting any Value
+                        let ret_ty = data.ty().clone();
+                        let value = if ret_ty.is_unit() {
+                            None
+                        } else {
+                            Some(data.dfg_mut().new_value().undef(ret_ty))
+                        };
+                        data.dfg_mut().replace_value_with(terminator).ret(value);
+                    }
+                    _ => {}
+                }
+            }
             data.dfg_mut().remove_bb(bb);
         }
     }
@@ -397,6 +451,36 @@ fun @merge_test(%input: i32): i32 {
     ret %final
 }
     "#;
+        apply_pass(ir, true);
+    }
+
+    #[test]
+    fn test_sccp_complex_call() {
+        let ir = r#"
+fun @main(): i32 {
+%entry:
+  %a = alloc i32
+  store 0, %a
+  jump %cond
+
+%cond:
+  br 0, %body, %0
+
+%1:
+  jump %0
+
+%body:
+  store 1, %a
+  jump %cond
+
+%0:
+  %2 = load %a
+  ret %2
+
+%3:
+  ret 0
+}
+        "#;
         apply_pass(ir, true);
     }
 }
