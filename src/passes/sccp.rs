@@ -206,6 +206,7 @@ impl SCCP {
         let mut v_map = HashMap::new();
         let mut block_args: HashMap<BasicBlock, SmallVec<[usize; 4]>, _> = FxHashMap::default();
 
+        // fill the vmap and repalce values that belong to the Function
         for (&value, lat) in &self.values {
             // only handle local values
             if !data.has(value) {
@@ -247,9 +248,10 @@ impl SCCP {
             if let Some(parent_bb) = data.layout().parent_bb(value) {
                 data.layout_mut().bb_mut(parent_bb).insts_mut().remove(&value);
             }
+            data.dfg_mut().remove_value(value);
         }
 
-        // simplify bb params
+        // simplify each bb params(phi node)
         for (bb, mut to_remove_indexes) in block_args {
             to_remove_indexes.sort();
             to_remove_indexes.dedup();
@@ -298,6 +300,7 @@ impl SCCP {
         }
 
         // Remove unreachable BBs based on SCCP executable_edges analysis
+        // should handle both BBs and Instructions
         let unreachable_bbs = data
             .layout_mut()
             .bbs()
@@ -308,7 +311,6 @@ impl SCCP {
 
         let mut removed_insts: HashMap<Value, Value> = HashMap::new();
         for bb in &unreachable_bbs {
-            dbg!(data.dfg().bb(*bb).name());
             if let Some((_, node)) = data.layout_mut().bbs_mut().remove(bb) {
                 for &inst in node.insts().keys() {
                     let ty = data.dfg().value(inst).ty().clone();
