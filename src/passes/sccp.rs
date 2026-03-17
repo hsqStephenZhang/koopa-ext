@@ -257,8 +257,21 @@ impl SCCP {
             to_remove_indexes.dedup();
             // Remove params from the basic block
             for &idx in to_remove_indexes.iter().rev() {
-                data.dfg_mut().bb_mut(bb).params_mut().remove(idx);
+                let old = data.dfg_mut().bb_mut(bb).params_mut().remove(idx);
+                let new = data
+                    .dfg_mut()
+                    .new_value()
+                    .integer(*self.values.get(&old).unwrap().get().unwrap());
+
+                let v_map = HashMap::from([(old, new)]);
+
+                for usage in data.dfg().value(old).used_by().clone() {
+                    let mut value_kind = data.dfg().value(usage).clone();
+                    assert!(replace_operands(&mut value_kind, &v_map));
+                    data.dfg_mut().replace_value_with(usage).raw(value_kind);
+                }
             }
+
             let terminators = data.dfg().bb(bb).used_by().clone();
             for terminator in terminators {
                 let kind = data.dfg().value(terminator).kind().clone();
@@ -457,28 +470,19 @@ fun @merge_test(%input: i32): i32 {
     #[test]
     fn test_sccp_complex_call() {
         let ir = r#"
-fun @main(): i32 {
+fun @sccp_loop_test(): i32 {
 %entry:
-  %a = alloc i32
-  store 0, %a
-  jump %cond
+    jump %loop(0)
 
-%cond:
-  br 0, %body, %0
-
-%1:
-  jump %0
+%loop(%i: i32):
+    %cond = lt %i, 1
+    br %cond, %body, %exit(1)
 
 %body:
-  store 1, %a
-  jump %cond
+    jump %exit(123)
 
-%0:
-  %2 = load %a
-  ret %2
-
-%3:
-  ret 0
+%exit(%res: i32):
+    ret %res
 }
         "#;
         apply_pass(ir, true);
