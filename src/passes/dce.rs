@@ -173,3 +173,46 @@ impl DeadCodeElimination {
         )
     }
 }
+
+
+#[cfg(test)]
+mod tests {
+    use koopa::back::koopa::Visitor as KoopaVisitor;
+    use koopa::back::{NameManager, Visitor};
+    use koopa::front::Driver;
+
+    use super::*;
+
+    fn apply_pass(ir_text: &str, debug_on: bool) {
+        let driver = Driver::from(ir_text);
+        let mut program = driver.generate_program().unwrap();
+        let func_id = *program.funcs().keys().next().unwrap();
+        let func_data = program.func_mut(func_id);
+        let mut pass = DeadCodeElimination::new();
+        pass.run_on(func_id, func_data);
+
+        if debug_on {
+            let mut visitor = KoopaVisitor;
+            let mut nm = NameManager::new();
+            let mut w = std::io::stdout();
+            visitor.visit(&mut w, &mut nm, &program).unwrap();
+        }
+    }
+
+    #[test]
+    fn test_dce_simple() {
+        let ir = r#"
+fun @local(): i32 {
+%entry:
+  %0 = add 1, 1
+  %1 = mul 2, 2
+  %2 = mul 2, 8
+  %3 = mul 4, 16
+  %4 = shl 64, 5
+  ret 2048
+}
+        "#;
+
+        apply_pass(ir, true);
+    }
+}

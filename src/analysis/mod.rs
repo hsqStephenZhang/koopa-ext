@@ -1,15 +1,18 @@
-/// ∨ operation to compute the least upper bound
-/// of two elements in a partial order
 pub trait JoinSemiLattice {
     /// returns if self is changed
     fn join(&mut self, other: Self) -> bool;
+}
+
+pub trait MeetSemiLattice {
+    /// returns if self is changed
+    fn meet(&mut self, other: Self) -> bool;
 }
 
 /// The lattice looks like:
 ///      Top
 /// v1 v2 ... vn
 ///     Bottom
-#[derive(Debug, Clone, PartialEq, PartialOrd)]
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
 pub enum FlattenValue<V> {
     Top,
     Concrete(V),
@@ -37,7 +40,7 @@ impl<V: PartialEq> JoinSemiLattice for FlattenValue<V> {
                         if *v1 == v2 {
                             false
                         } else {
-                            *v1 = v2;
+                            *self = FlattenValue::Top;
                             true
                         }
                     }
@@ -56,27 +59,31 @@ impl<V: PartialEq> JoinSemiLattice for FlattenValue<V> {
     }
 }
 
-pub trait Direction {}
+impl<V: PartialEq> MeetSemiLattice for FlattenValue<V> {
+    fn meet(&mut self, other: Self) -> bool {
+        match (&*self, other) {
+            (FlattenValue::Bottom, _) | (_, FlattenValue::Top) => false,
 
-pub struct Forward;
+            (FlattenValue::Top, other_val) => {
+                *self = other_val;
+                true
+            }
 
-impl Direction for Forward {}
-
-pub struct Backward;
-
-impl Direction for Backward {}
-
-pub trait DataFlowAnalysis {
-    type Direction: Direction;
-
-    type Domain: JoinSemiLattice;
-
-    /// bottom value for worklist algorithm
-    fn bottom_value(&self) -> Self::Domain;
-
-    /// actual runner of worklist algorithm
-    fn run_analysis(func: &koopa::ir::FunctionData);
-
-    /// will be invoked after the analysis
-    fn apply_effects(func: &mut koopa::ir::FunctionData);
+            (FlattenValue::Concrete(v1), other_val) => match other_val {
+                FlattenValue::Top => false,
+                FlattenValue::Bottom => {
+                    *self = FlattenValue::Bottom;
+                    true
+                }
+                FlattenValue::Concrete(v2) => {
+                    if *v1 == v2 {
+                        false
+                    } else {
+                        *self = FlattenValue::Bottom;
+                        true
+                    }
+                }
+            },
+        }
+    }
 }

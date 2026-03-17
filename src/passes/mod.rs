@@ -3,6 +3,7 @@ pub mod gvn;
 pub mod inline;
 pub mod licm;
 pub mod loop_unroll;
+pub mod sccp;
 pub mod simplify_cfg;
 pub mod simplify_loop;
 

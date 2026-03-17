@@ -12,6 +12,10 @@ pub trait FunctionDataExt {
     fn get_value_by_name(&self, name: &str) -> Option<Value>;
 
     fn get_bb_by_name(&self, name: &str) -> Option<BasicBlock>;
+
+    fn try_eval_i32(&self, value: Value) -> Option<i32>;
+
+    fn bb_of_arg(&self, arg: Value) -> Option<BasicBlock>;
 }
 
 impl FunctionDataExt for FunctionData {
@@ -21,6 +25,26 @@ impl FunctionDataExt for FunctionData {
 
     fn get_bb_by_name(&self, name: &str) -> Option<BasicBlock> {
         self.dfg().bbs().iter().find(|(_, v)| v.name().as_deref() == Some(name)).map(|(k, _)| *k)
+    }
+
+    fn try_eval_i32(&self, value: Value) -> Option<i32> {
+        let Some(value_data) = self.dfg().values().get(&value) else { return None };
+        match value_data.kind() {
+            ValueKind::Integer(integer) => Some(integer.value()),
+            ValueKind::ZeroInit(_) => Some(0),
+            _ => None,
+        }
+    }
+
+    fn bb_of_arg(&self, arg: Value) -> Option<BasicBlock> {
+        for bb in self.layout().bbs().keys() {
+            for param in self.dfg().bb(*bb).params() {
+                if *param == arg {
+                    return Some(*bb);
+                }
+            }
+        }
+        None
     }
 }
 
