@@ -30,8 +30,7 @@ impl FunctionDataExt for FunctionData {
     }
 
     fn try_eval_i32(&self, value: Value) -> Option<i32> {
-        let Some(value_data) = self.dfg().values().get(&value) else { return None };
-        match value_data.kind() {
+        match self.dfg().values().get(&value)?.kind() {
             ValueKind::Integer(integer) => Some(integer.value()),
             ValueKind::ZeroInit(_) => Some(0),
             _ => None,

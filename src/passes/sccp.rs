@@ -197,10 +197,8 @@ impl SCCP {
     /// returns if the original value is not the same as the old one
     fn update(&mut self, value: Value, lattice_value: FlattenValue<i32>) -> bool {
         // by default it's Top
-        if !self.values.contains_key(&value) {
-            self.values.insert(value, FlattenValue::Top);
-        }
-        let origin = self.values.insert(value, lattice_value.clone()).unwrap();
+        self.values.entry(value).or_insert(FlattenValue::Top);
+        let origin = self.values.insert(value, lattice_value).unwrap();
         origin != lattice_value
     }
 

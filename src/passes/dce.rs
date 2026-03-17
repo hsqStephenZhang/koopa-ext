@@ -174,7 +174,6 @@ impl DeadCodeElimination {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use koopa::back::koopa::Visitor as KoopaVisitor;

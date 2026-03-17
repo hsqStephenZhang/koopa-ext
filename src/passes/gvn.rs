@@ -191,14 +191,14 @@ impl FunctionPass for GVN {
             for inst in insts {
                 expr_table.process_instruction(inst, data, &dom_tree);
 
-                if let Some(leader) = expr_table.leader(inst) {
-                    if inst != leader {
-                        let v_map = HashMap::from([(inst, leader)]);
-                        for usage in data.dfg().value(inst).used_by().clone() {
-                            let mut value_kind = data.dfg().value(usage).clone();
-                            assert!(replace_operands(&mut value_kind, &v_map));
-                            data.dfg_mut().replace_value_with(usage).raw(value_kind);
-                        }
+                if let Some(leader) = expr_table.leader(inst)
+                    && inst != leader
+                {
+                    let v_map = HashMap::from([(inst, leader)]);
+                    for usage in data.dfg().value(inst).used_by().clone() {
+                        let mut value_kind = data.dfg().value(usage).clone();
+                        assert!(replace_operands(&mut value_kind, &v_map));
+                        data.dfg_mut().replace_value_with(usage).raw(value_kind);
                     }
                 }
             }
