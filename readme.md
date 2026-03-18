@@ -9,15 +9,17 @@ this crate offers a wide range of utilities missed by koopa, including
   - loop analysis
   - graphviz visualization
 - passes
-  - LICM
+  - Simplify CFG
+  - GVN
+  - SCCP
+  - Inline
   - Loop Simplify
-
+  - LICM
+- Misc
+  - scalar evoution analysis
 
 ## TODOs
 
-- [ ] scalar evoution analysis
+- [ ] loop bound analysis
 - [ ] alias analysis
-- [ ] inliner
-- [ ] gvn
-- [x] Loop Simplify
 - [ ] Loop Unroll
