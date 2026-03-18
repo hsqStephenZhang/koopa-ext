@@ -7,7 +7,8 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 
 use crate::analysis::{FlattenValue, MeetSemiLattice};
-use crate::utils::{FunctionDataExt, replace_operands};
+use crate::ext::FunctionDataExt;
+use crate::utils::replace_operands;
 
 /// Specifically, this:
 ///   * Assumes values are constant unless proven otherwise

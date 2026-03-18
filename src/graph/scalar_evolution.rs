@@ -338,11 +338,11 @@ mod tests {
     use koopa::ir::{BasicBlock, Function, FunctionData};
     use koopa::opt::FunctionPass;
 
+    use crate::ext::FunctionDataExt;
     use crate::graph::dom_tree::DomTree;
     use crate::graph::loops::LoopsAnalysis;
     use crate::graph::scalar_evolution::ScalarEvolutionAnalysis;
     use crate::passes::LoopSimplify;
-    use crate::utils::FunctionDataExt;
 
     fn prepare(
         func: Function,
