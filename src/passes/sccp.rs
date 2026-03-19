@@ -204,7 +204,7 @@ impl SCCP {
     }
 
     fn sweep(&self, data: &mut koopa::ir::FunctionData) {
-        let mut v_map = HashMap::new();
+        let mut v_map = FxHashMap::default();
         let mut block_args: HashMap<BasicBlock, SmallVec<[usize; 4]>, _> = FxHashMap::default();
 
         // fill the vmap and repalce values that belong to the Function
@@ -264,7 +264,7 @@ impl SCCP {
                     .new_value()
                     .integer(*self.values.get(&old).unwrap().get().unwrap());
 
-                let v_map = HashMap::from([(old, new)]);
+                let v_map = FxHashMap::from_iter([(old, new)]);
 
                 for usage in data.dfg().value(old).used_by().clone() {
                     let mut value_kind = data.dfg().value(usage).clone();
@@ -323,7 +323,7 @@ impl SCCP {
             .copied()
             .collect::<Vec<_>>();
 
-        let mut removed_insts: HashMap<Value, Value> = HashMap::new();
+        let mut removed_insts: FxHashMap<Value, Value> = FxHashMap::default();
         for bb in &unreachable_bbs {
             if let Some((_, node)) = data.layout_mut().bbs_mut().remove(bb) {
                 for &inst in node.insts().keys() {

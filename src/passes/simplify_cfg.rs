@@ -1,8 +1,7 @@
-use std::collections::HashMap;
-
 use koopa::ir::builder::{LocalInstBuilder, ValueBuilder};
 use koopa::ir::{BasicBlock, Value, ValueKind};
 use koopa::opt::FunctionPass;
+use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
 use crate::graph::reachable::reachable;
@@ -129,7 +128,7 @@ fn merge_bb(data: &mut koopa::ir::FunctionData, pred: BasicBlock, bb: BasicBlock
         ValueKind::Jump(jump) => jump.args().iter().copied().collect::<SmallVec<[Value; 4]>>(),
         _ => todo!(),
     };
-    let v_map = params.into_iter().zip(args).collect::<HashMap<_, _>>();
+    let v_map = params.into_iter().zip(args).collect::<FxHashMap<_, _>>();
 
     // 2. add all instructions in `bb` to `pred`
     //    fix the usage of BlockParams of `bb` in these insts
@@ -222,7 +221,7 @@ fn eliminate_empty_bb(data: &mut koopa::ir::FunctionData, empty_bb: BasicBlock) 
 
                     let prev_args = jump.args().iter().copied().collect::<SmallVec<[Value; 4]>>();
                     let v_map =
-                        params.clone().into_iter().zip(prev_args).collect::<HashMap<_, _>>();
+                        params.clone().into_iter().zip(prev_args).collect::<FxHashMap<_, _>>();
                     let mut final_args = jump_args.clone();
                     replace_operands(&mut final_args, &v_map);
 
@@ -237,7 +236,7 @@ fn eliminate_empty_bb(data: &mut koopa::ir::FunctionData, empty_bb: BasicBlock) 
                     let prev_args =
                         branch.true_args().iter().copied().collect::<SmallVec<[Value; 4]>>();
                     let v_map =
-                        params.clone().into_iter().zip(prev_args).collect::<HashMap<_, _>>();
+                        params.clone().into_iter().zip(prev_args).collect::<FxHashMap<_, _>>();
                     let mut final_args = jump_args.clone();
                     replace_operands(&mut final_args, &v_map);
 
@@ -250,7 +249,7 @@ fn eliminate_empty_bb(data: &mut koopa::ir::FunctionData, empty_bb: BasicBlock) 
                     let prev_args =
                         branch.false_args().iter().copied().collect::<SmallVec<[Value; 4]>>();
                     let v_map =
-                        params.clone().into_iter().zip(prev_args).collect::<HashMap<_, _>>();
+                        params.clone().into_iter().zip(prev_args).collect::<FxHashMap<_, _>>();
                     let mut final_args = jump_args.clone();
                     replace_operands(&mut final_args, &v_map);
 

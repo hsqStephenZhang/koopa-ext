@@ -1,4 +1,4 @@
-use koopa::ir::{BasicBlock, FunctionData, Value, ValueKind};
+use koopa::ir::{BasicBlock, FunctionData, Type, Value, ValueKind};
 
 use crate::graph::DirectedGraph;
 
@@ -16,6 +16,8 @@ pub trait FunctionDataExt {
     fn bb_of_arg(&self, arg: Value) -> Option<BasicBlock>;
 
     fn has(&self, value: Value) -> bool;
+
+    fn bb_params_name_tys(&self, bb: BasicBlock) -> Vec<(Option<String>, Type)>;
 }
 
 impl FunctionDataExt for FunctionData {
@@ -62,5 +64,12 @@ impl FunctionDataExt for FunctionData {
 
     fn has(&self, value: Value) -> bool {
         self.dfg().values().get(&value).is_some()
+    }
+
+    fn bb_params_name_tys(&self, bb: BasicBlock) -> Vec<(Option<String>, Type)> {
+        self.dfg().bb(bb).params().into_iter().map(|p| {
+            let v = self.dfg().value(*p);
+            (v.name().clone(), v.ty().clone())
+        }).collect()
     }
 }

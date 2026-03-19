@@ -71,6 +71,14 @@ impl SCEVExpr {
             (SCEVExpr::AddRec(_), SCEVExpr::AddRec(_)) => None,
         }
     }
+
+    pub fn as_const(&self) -> Option<Constant> {
+        if let SCEVExpr::Invariant(InVarExpr::Constant(c)) = self { Some(*c) } else { None }
+    }
+
+    pub fn as_addrec(&self) -> Option<&AffineAddRec> {
+        if let Self::AddRec(v) = self { Some(v) } else { None }
+    }
 }
 
 /// `val = base + i * step` or `next = next + step where init vlaue is base`
@@ -148,15 +156,19 @@ impl InVarExpr {
     pub fn neg(self) -> Self {
         Self::Neg(Box::new(self))
     }
+
+    pub fn as_const(&self) -> Option<Constant> {
+        if let Self::Constant(c) = self { Some(*c) } else { None }
+    }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct Constant {
     val: i32,
 }
 
 impl Constant {
-    fn value(&self) -> i32 {
+    pub fn value(&self) -> i32 {
         self.val
     }
 
@@ -402,9 +414,12 @@ mod tests {
         let (_, loops) = prepare(*func, data);
 
         let mut scev_pass = ScalarEvolutionAnalysis::new();
-        println!("=== Running SCEV Analysis ===");
         scev_pass.compute(data, &loops);
-        println!("=== SCEV Analysis Done ===");
+        let v = data.get_value_by_name("%next_i").unwrap();
+        let header = data.get_bb_by_name("%loop_header").unwrap();
+        let lp = loops.bb_to_loop()[&header];
+        let expr_i = scev_pass.get_or_insert(data, &loops, lp, v);
+        println!("{:?}", expr_i);
     }
 
     #[test]

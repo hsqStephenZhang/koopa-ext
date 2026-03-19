@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use koopa::ir::builder::ValueBuilder;
 use koopa::ir::{BasicBlock, BinaryOp, FunctionData, Value, ValueKind};
 use koopa::opt::FunctionPass;
@@ -194,7 +192,7 @@ impl FunctionPass for GVN {
                 if let Some(leader) = expr_table.leader(inst)
                     && inst != leader
                 {
-                    let v_map = HashMap::from([(inst, leader)]);
+                    let v_map = FxHashMap::from_iter([(inst, leader)]);
                     for usage in data.dfg().value(inst).used_by().clone() {
                         let mut value_kind = data.dfg().value(usage).clone();
                         assert!(replace_operands(&mut value_kind, &v_map));

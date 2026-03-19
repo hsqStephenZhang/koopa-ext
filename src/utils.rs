@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use koopa::ir::builder::{LocalInstBuilder, ValueBuilder};
 use koopa::ir::dfg::DataFlowGraph;
 use koopa::ir::entities::ValueData;
@@ -88,7 +86,7 @@ impl ValuesVisit for ValueData {
 /// returns if it's changed
 pub fn replace_operands<V: ValuesVisit<Output = ()>>(
     data: &mut V,
-    v_map: &HashMap<Value, Value>,
+    v_map: &FxHashMap<Value, Value>,
 ) -> bool {
     let mut changed = false;
     let replacer = |old: &mut Value| {
@@ -164,6 +162,32 @@ pub fn clone_bb(
             .insts_mut()
             .push_key_back(new_inst)
             .unwrap();
+        vmap.insert(old_inst, new_inst);
+    }
+}
+
+pub fn clone_bb_in_same_func(
+    data: &mut FunctionData,
+    vmap: &mut FxHashMap<Value, Value>,
+    bb_map: &FxHashMap<BasicBlock, BasicBlock>,
+    old_bb: BasicBlock,
+    new_bb: BasicBlock,
+) {
+    let insts: Vec<_> = {
+        data.layout()
+            .bbs()
+            .node(&old_bb)
+            .unwrap()
+            .insts()
+            .keys()
+            .filter(|&i| !vmap.contains_key(i))
+            .copied()
+            .collect()
+    };
+
+    for old_inst in insts {
+        let new_inst = clone_instruction_in_same_func(data, vmap, bb_map, old_inst);
+        data.layout_mut().bb_mut(new_bb).insts_mut().push_key_back(new_inst).unwrap();
         vmap.insert(old_inst, new_inst);
     }
 }
@@ -319,6 +343,7 @@ fn clone_instruction(
 pub fn clone_instruction_in_same_func(
     data: &mut FunctionData,
     vmap: &mut FxHashMap<Value, Value>,
+    bb_map: &FxHashMap<BasicBlock, BasicBlock>,
     value: Value,
 ) -> Value {
     if let Some(&new_val) = vmap.get(&value) {
@@ -369,17 +394,18 @@ pub fn clone_instruction_in_same_func(
             let cond = mapped(br.cond());
             let true_args = br.true_args().iter().map(|&v| mapped(v)).collect();
             let false_args = br.false_args().iter().map(|&v| mapped(v)).collect();
+            let true_bb = *bb_map.get(&br.true_bb()).unwrap_or(&br.true_bb());
+            let false_bb = *bb_map.get(&br.false_bb()).unwrap_or(&br.false_bb());
+
             data.dfg_mut().new_value().branch_with_args(
-                cond,
-                br.true_bb(), // Branch targets are kept as-is since there's no bb_map
-                br.false_bb(),
-                true_args,
-                false_args,
+                cond, true_bb, // Branch targets are kept as-is since there's no bb_map
+                false_bb, true_args, false_args,
             )
         }
         ValueKind::Jump(j) => {
             let args = j.args().iter().map(|&v| mapped(v)).collect();
-            data.dfg_mut().new_value().jump_with_args(j.target(), args)
+            let tgt = *bb_map.get(&j.target()).unwrap_or(&j.target());
+            data.dfg_mut().new_value().jump_with_args(tgt, args)
         }
         ValueKind::Call(call) => {
             let args = call.args().iter().map(|&v| mapped(v)).collect();
