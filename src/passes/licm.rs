@@ -1,6 +1,4 @@
 //! Loop Invariatn Code Motion
-use std::collections::HashMap;
-
 use koopa::ir::{BasicBlock, BinaryOp, FunctionData, Value, ValueKind};
 use koopa::opt::FunctionPass;
 use rustc_hash::FxHashMap;
@@ -25,7 +23,7 @@ impl FunctionPass for LICM {
 
         let rpo: Vec<BasicBlock> = reverse_post_order(data, entry);
         let bb_to_rpo_num =
-            rpo.iter().enumerate().map(|(i, bb)| (*bb, i)).collect::<HashMap<_, _>>();
+            rpo.iter().enumerate().map(|(i, bb)| (*bb, i)).collect::<FxHashMap<_, _>>();
 
         let mut loop_to_bb = loops.loop_to_bb();
         for lp in loops.bottom_up() {
