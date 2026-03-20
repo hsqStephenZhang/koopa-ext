@@ -4,6 +4,7 @@ use koopa::opt::FunctionPass;
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
+use crate::ext::FunctionDataExt;
 use crate::graph::reachable::reachable;
 use crate::graph::{Predecessors, Successors};
 use crate::utils::{replace_operands, safely_remove_inst_from_dfg};
@@ -32,22 +33,8 @@ impl FunctionPass for SimplifyCFG {
             .copied()
             .collect::<Vec<_>>();
 
-        // dead instructions for the unreachable blocks
-        let mut removed_insts: Vec<Value> = vec![];
-        for bb in &unreachable_bbs {
-            if let Some((_, node)) = data.layout_mut().bbs_mut().remove(bb) {
-                for (inst, _) in node.insts().iter() {
-                    removed_insts.push(*inst);
-                }
-            }
-        }
-
-        for inst in &removed_insts {
-            safely_remove_inst_from_dfg(data.dfg_mut(), *inst);
-        }
-
-        for bb in &unreachable_bbs {
-            data.dfg_mut().remove_bb(*bb);
+        for bb in unreachable_bbs {
+            data.remove_bb_insts(bb);
         }
 
         // 2. merge a BB to its predecessor if it has only one predecessor

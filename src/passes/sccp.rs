@@ -323,63 +323,8 @@ impl SCCP {
             .copied()
             .collect::<Vec<_>>();
 
-        let mut removed_insts: FxHashMap<Value, Value> = FxHashMap::default();
-        for bb in &unreachable_bbs {
-            if let Some((_, node)) = data.layout_mut().bbs_mut().remove(bb) {
-                for &inst in node.insts().keys() {
-                    let ty = data.dfg().value(inst).ty().clone();
-                    if !ty.is_unit() {
-                        let undef = data.dfg_mut().new_value().undef(ty);
-                        removed_insts.insert(inst, undef);
-                    }
-                }
-            }
-        }
-
-        for &inst in removed_insts.keys() {
-            for usage in data.dfg().value(inst).used_by().clone() {
-                let mut value_kind = data.dfg().value(usage).clone();
-                assert!(replace_operands(&mut value_kind, &removed_insts));
-                data.dfg_mut().replace_value_with(usage).raw(value_kind);
-            }
-        }
-
-        for &inst in removed_insts.keys() {
-            data.dfg_mut().remove_value(inst);
-        }
-
-        for &bb in &unreachable_bbs {
-            let usages = data.dfg().bb(bb).used_by().clone();
-
-            for terminator in usages {
-                match data.dfg().value(terminator).kind() {
-                    ValueKind::Branch(branch) => {
-                        let (target, args) = if branch.true_bb() == bb {
-                            (branch.false_bb(), branch.false_args().to_vec())
-                        } else {
-                            (branch.true_bb(), branch.true_args().to_vec())
-                        };
-                        data.dfg_mut().replace_value_with(terminator).jump_with_args(target, args);
-                    }
-                    ValueKind::Jump(_) => {
-                        // if `bb` is unreachable, **then the user bbs are also unreachable**
-                        // **so we could replace the terminator with any instruction we like**
-                        // we chose to replace with an `ret %undef_value` or simpliy an empty `ret`
-                        // because the usage/reference of current `bb` will hinder us from
-                        // removing them because koopa will check the usage before actually
-                        // deleting any Value
-                        let ret_ty = data.ty().clone();
-                        let value = if ret_ty.is_unit() {
-                            None
-                        } else {
-                            Some(data.dfg_mut().new_value().undef(ret_ty))
-                        };
-                        data.dfg_mut().replace_value_with(terminator).ret(value);
-                    }
-                    _ => {}
-                }
-            }
-            data.dfg_mut().remove_bb(bb);
+        for bb in unreachable_bbs {
+            data.remove_bb_insts(bb);
         }
     }
 }

@@ -1,6 +1,6 @@
-use koopa::ir::builder::ValueBuilder;
+use koopa::ir::builder::{LocalInstBuilder, ValueBuilder};
 use koopa::ir::{BasicBlock, FunctionData, Type, Value, ValueKind};
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::graph::DirectedGraph;
 
@@ -24,6 +24,10 @@ pub trait FunctionDataExt {
     fn bb_params_name_tys(&self, bb: BasicBlock) -> Vec<(Option<String>, Type)>;
 
     fn replace_all_uses_with(&mut self, old: Value, new: Value);
+
+    /// remove basic block and all its params, instructions
+    /// will replace all usages of the instructions with `undef`
+    fn remove_bb_insts(&mut self, bb: BasicBlock);
 }
 
 impl FunctionDataExt for FunctionData {
@@ -103,5 +107,66 @@ impl FunctionDataExt for FunctionData {
                 self.dfg_mut().replace_value_with(usage).raw(value_data);
             }
         }
+    }
+
+    fn remove_bb_insts(&mut self, bb: BasicBlock) {
+        let mut removed_insts: FxHashMap<Value, Value> = FxHashMap::default();
+
+        let params = self.dfg().bb(bb).params().iter().copied().collect::<FxHashSet<_>>();
+        if let Some((_, node)) = self.layout_mut().bbs_mut().remove(&bb) {
+            for &inst in node.insts().keys().chain(params.iter()) {
+                let ty = self.dfg().value(inst).ty().clone();
+                if !ty.is_unit() {
+                    let undef = self.dfg_mut().new_value().undef(ty);
+                    removed_insts.insert(inst, undef);
+                }
+            }
+        }
+
+        for &inst in removed_insts.keys() {
+            for usage in self.dfg().value(inst).used_by().clone() {
+                let mut value_kind = self.dfg().value(usage).clone();
+                assert!(crate::utils::replace_operands(&mut value_kind, &removed_insts));
+                self.dfg_mut().replace_value_with(usage).raw(value_kind);
+            }
+        }
+
+        // for params, we need only replace them with undef
+        // the removal will be done within `dfg_mut().remove_bb(bb)`
+        for &inst in removed_insts.keys().filter(|inst| !params.contains(inst)) {
+            self.dfg_mut().remove_value(inst);
+        }
+
+        let usages = self.dfg().bb(bb).used_by().clone();
+
+        for terminator in usages {
+            match self.dfg().value(terminator).kind() {
+                ValueKind::Branch(branch) => {
+                    let (target, args) = if branch.true_bb() == bb {
+                        (branch.false_bb(), branch.false_args().to_vec())
+                    } else {
+                        (branch.true_bb(), branch.true_args().to_vec())
+                    };
+                    self.dfg_mut().replace_value_with(terminator).jump_with_args(target, args);
+                }
+                ValueKind::Jump(_) => {
+                    // if `bb` is unreachable, **then the user bbs are also unreachable**
+                    // **so we could replace the terminator with any instruction we like**
+                    // we chose to replace with an `ret %undef_value` or simpliy an empty `ret`
+                    // because the usage/reference of current `bb` will hinder us from
+                    // removing them because koopa will check the usage before actually
+                    // deleting any Value
+                    let ret_ty = self.ty().clone();
+                    let value = if ret_ty.is_unit() {
+                        None
+                    } else {
+                        Some(self.dfg_mut().new_value().undef(ret_ty))
+                    };
+                    self.dfg_mut().replace_value_with(terminator).ret(value);
+                }
+                _ => {}
+            }
+        }
+        self.dfg_mut().remove_bb(bb);
     }
 }
