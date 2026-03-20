@@ -206,19 +206,25 @@ impl<'a> SSAConstructor<'a> {
 
     // TODO: implement it in another way
     fn new_phi(&mut self, block: BasicBlock, variable: Value) -> Value {
+        let len = self.data.dfg().bb(block).params().len() + 1;
         let ty = self.var_types[&variable].clone();
 
-        // get a block arg via a dummy block, 
-        // which is instantly delete after the job is finished
-        let dummy = self.data.dfg_mut().new_bb().basic_block_with_params(None, vec![ty]);
-        let phi = self.data.dfg_mut().bb_mut(dummy).params_mut().pop().unwrap();
+        // we have to create params with such length because
+        // user might get BlockArgRef's index from it
+        let mut dummy_params = vec![koopa::ir::Type::get_i32(); len];
+        dummy_params.push(ty);
+        let dummy = self.data.dfg_mut().new_bb().basic_block_with_params(None, dummy_params);
+        let my_arg = self.data.dfg_mut().bb_mut(dummy).params_mut().pop().unwrap();
+        // Just leave the dummy block in layout disconnected, or explicitly drop it
+        // We'll leave it without layout, which means it will be filtered out by IR builder.
+        // But to be clean we just remove it from DFG
         self.data.dfg_mut().remove_bb(dummy);
 
-        self.data.dfg_mut().bb_mut(block).params_mut().push(phi);
+        self.data.dfg_mut().bb_mut(block).params_mut().push(my_arg);
         self.bb_phi_vars.entry(block).or_default().push(variable);
-        self.phi_vars.insert(phi, variable);
-        self.phi_block.insert(phi, block);
-        phi
+        self.phi_vars.insert(my_arg, variable);
+        self.phi_block.insert(my_arg, block);
+        my_arg
     }
 
     fn add_phi_operands(&mut self, block: BasicBlock, variable: Value, phi: Value) -> Value {
