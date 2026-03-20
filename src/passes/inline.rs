@@ -163,7 +163,7 @@ impl ModulePass for Inliner {
 
                     // 3-4) pre-create target entry + other bbs map
                     let old_entry = program.func(target_func).layout().entry_bb().unwrap();
-                    let old_bbs = program.func(target_func).all_bbs();
+                    let old_bbs = program.func(target_func).bbs_owned();
                     let mut bb_map = FxHashMap::default();
 
                     for &old_bb in &old_bbs {

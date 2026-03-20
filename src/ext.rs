@@ -1,4 +1,6 @@
+use koopa::ir::builder::ValueBuilder;
 use koopa::ir::{BasicBlock, FunctionData, Type, Value, ValueKind};
+use rustc_hash::FxHashMap;
 
 use crate::graph::DirectedGraph;
 
@@ -7,9 +9,11 @@ pub trait FunctionDataExt {
 
     fn get_bb_by_name(&self, name: &str) -> Option<BasicBlock>;
 
+    fn insts(&self, bb: BasicBlock) -> Vec<Value>;
+
     fn inst_count(&self) -> usize;
 
-    fn all_bbs(&self) -> Vec<BasicBlock>;
+    fn bbs_owned(&self) -> Vec<BasicBlock>;
 
     fn try_eval_i32(&self, value: Value) -> Option<i32>;
 
@@ -18,6 +22,8 @@ pub trait FunctionDataExt {
     fn has(&self, value: Value) -> bool;
 
     fn bb_params_name_tys(&self, bb: BasicBlock) -> Vec<(Option<String>, Type)>;
+
+    fn replace_all_uses_with(&mut self, old: Value, new: Value);
 }
 
 impl FunctionDataExt for FunctionData {
@@ -39,7 +45,11 @@ impl FunctionDataExt for FunctionData {
         cnt
     }
 
-    fn all_bbs(&self) -> Vec<BasicBlock> {
+    fn insts(&self, bb: BasicBlock) -> Vec<Value> {
+        self.layout().bbs().node(&bb).unwrap().insts().keys().copied().collect::<Vec<_>>()
+    }
+
+    fn bbs_owned(&self) -> Vec<BasicBlock> {
         self.nodes_iter().collect()
     }
 
@@ -67,9 +77,31 @@ impl FunctionDataExt for FunctionData {
     }
 
     fn bb_params_name_tys(&self, bb: BasicBlock) -> Vec<(Option<String>, Type)> {
-        self.dfg().bb(bb).params().into_iter().map(|p| {
-            let v = self.dfg().value(*p);
-            (v.name().clone(), v.ty().clone())
-        }).collect()
+        self.dfg()
+            .bb(bb)
+            .params()
+            .into_iter()
+            .map(|p| {
+                let v = self.dfg().value(*p);
+                (v.name().clone(), v.ty().clone())
+            })
+            .collect()
+    }
+
+    fn replace_all_uses_with(&mut self, old: Value, new: Value) {
+        if !self.dfg().values().contains_key(&old) {
+            return;
+        }
+        let usages = self.dfg().value(old).used_by().clone();
+
+        let mut v_map = FxHashMap::default();
+        v_map.insert(old, new);
+
+        for usage in usages {
+            let mut value_data = self.dfg().value(usage).clone();
+            if crate::utils::replace_operands(&mut value_data, &v_map) {
+                self.dfg_mut().replace_value_with(usage).raw(value_data);
+            }
+        }
     }
 }

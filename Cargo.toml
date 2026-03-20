@@ -10,5 +10,6 @@ rustc-hash = "2.1.1"
 smallvec = "1.15.1"
 
 [dev-dependencies]
+koopa = "0.0.9"
 petgraph = "0.8.3"
 rand = "0.10"

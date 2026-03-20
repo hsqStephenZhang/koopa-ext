@@ -1,3 +1,4 @@
+pub mod memory_ssa;
 pub trait JoinSemiLattice {
     /// returns if self is changed
     fn join(&mut self, other: Self) -> bool;
