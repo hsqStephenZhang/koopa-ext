@@ -198,6 +198,11 @@ impl LoopUnRoll {
     ) -> UnrollVerdict {
         let bb = loops.loops()[&lp];
 
+        // only handle simple loop
+        if loops.loops()[&lp].parent().is_some() {
+            return UnrollVerdict::Not;
+        }
+
         // must be canonical form
         if loops.preheader(data, lp).is_none() {
             return UnrollVerdict::Not;
@@ -207,6 +212,15 @@ impl LoopUnRoll {
         }
         if loops.exits(data, lp).count() != 1 {
             return UnrollVerdict::Not;
+        }
+
+        // the loop cannot have any alloc
+        for &bb in &loops.loop_to_bb()[&lp] {
+            for inst in data.insts(bb) {
+                if matches!(data.dfg().value(inst).kind(), ValueKind::Alloc(_)) {
+                    return UnrollVerdict::Not;
+                }
+            }
         }
 
         let header = bb.header();
