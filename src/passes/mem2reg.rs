@@ -1,4 +1,4 @@
-use koopa::ir::builder::{BasicBlockBuilder, LocalInstBuilder, ValueBuilder};
+use koopa::ir::builder::{LocalInstBuilder, ValueBuilder};
 use koopa::ir::{BasicBlock, FunctionData, Type, Value, ValueKind};
 use koopa::opt::FunctionPass;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -27,7 +27,13 @@ struct SSAConstructor<'a> {
     phi_operands: FxHashMap<Value, Vec<(BasicBlock, Value)>>,
     phi_vars: FxHashMap<Value, Value>,
     phi_block: FxHashMap<Value, BasicBlock>,
-    bb_phi_vars: FxHashMap<BasicBlock, Vec<Value>>,
+
+    // 修复点：记录每个 Block 中存活的 (变量, 假Phi)
+    bb_phi_vars: FxHashMap<BasicBlock, Vec<(Value, Value)>>,
+    // 修复点：手动维护假 Phi 的 Use-Def 链，Koopa IR 看不到未插入的 Undef
+    phi_users: FxHashMap<Value, FxHashSet<Value>>,
+    // 修复点：记录被消除的假 Phi 指向的最终值（类似并查集）
+    replaced_phis: FxHashMap<Value, Value>,
 }
 
 impl<'a> SSAConstructor<'a> {
@@ -44,6 +50,8 @@ impl<'a> SSAConstructor<'a> {
             phi_vars: Default::default(),
             phi_block: Default::default(),
             bb_phi_vars: Default::default(),
+            phi_users: Default::default(),
+            replaced_phis: Default::default(),
         }
     }
 
@@ -52,11 +60,9 @@ impl<'a> SSAConstructor<'a> {
             return;
         };
 
-        // 1. Identify promotable allocs
+        // 1. 寻找可提升的 Alloc
         let mut promotable = FxHashSet::default();
         for inst in self.data.insts(entry_bb) {
-            // check if all usages of alloc are load & store
-            // GEP is not supported for now
             if let ValueKind::Alloc(_) = self.data.dfg().value(inst).kind() {
                 let mut ok = true;
                 for use_val in self.data.dfg().value(inst).used_by().clone() {
@@ -85,7 +91,7 @@ impl<'a> SSAConstructor<'a> {
             return;
         }
 
-        // 2. Compute CFG for later usage
+        // 2. 计算 CFG
         for &bb in self.data.layout().bbs().keys() {
             self.succs.entry(bb).or_default().extend(self.data.succs(bb));
             self.preds.entry(bb).or_default().extend(self.data.preds(bb));
@@ -94,7 +100,7 @@ impl<'a> SSAConstructor<'a> {
         let blocks = crate::graph::traverse::reverse_post_order(&*self.data, entry_bb);
         let mut visited = FxHashSet::default();
 
-        // 3. Init Undef for Promotable
+        // 3. 为入口赋予初值 Undef
         for &var in &promotable {
             let ty = self.var_types[&var].clone();
             let undef = self.data.dfg_mut().new_value().undef(ty);
@@ -104,9 +110,8 @@ impl<'a> SSAConstructor<'a> {
         let mut loads_to_replace = Vec::new();
         let mut stores_to_remove = Vec::new();
 
-        // 4. Trace blocks
+        // 4. 遍历处理 Basic Blocks
         for block in blocks {
-            // Check if we can seal this block before processing
             if !self.sealed_blocks.contains(&block) {
                 let preds = self.preds.get(&block).map(|v| v.as_slice()).unwrap_or_default();
                 if preds.iter().all(|p| visited.contains(p)) {
@@ -135,7 +140,6 @@ impl<'a> SSAConstructor<'a> {
 
             visited.insert(block);
 
-            // Forward sealing check: after processing, any successors where all preds are visited can be sealed
             for succ in self.succs.get(&block).unwrap_or(&smallvec![]).clone() {
                 if !self.sealed_blocks.contains(&succ) {
                     let p = self.preds.get(&succ).unwrap();
@@ -152,23 +156,41 @@ impl<'a> SSAConstructor<'a> {
             }
         }
 
+        // 5. 实例化真正的 Block Parameters (Phi)
+        let fake_to_real_phi = self.rebuild_bb_params();
+        self.rebuild_terminators(&fake_to_real_phi);
+
+        // 6. 替换所有的 Loads
         for (block, load, val) in loads_to_replace {
-            self.data.replace_all_uses_with(load, val);
+            let real_val = self.final_resolve(val, &fake_to_real_phi);
+            self.data.replace_all_uses_with(load, real_val);
             self.data.layout_mut().bb_mut(block).insts_mut().remove(&load);
             crate::utils::safely_remove_inst_from_dfg(self.data.dfg_mut(), load);
         }
 
+        // 7. 清理 Stores 和 Allocs
         for (block, store) in stores_to_remove {
             self.data.layout_mut().bb_mut(block).insts_mut().remove(&store);
             crate::utils::safely_remove_inst_from_dfg(self.data.dfg_mut(), store);
         }
 
-        self.rebuild_terminators();
-
         for alloc in promotable {
             self.data.layout_mut().bb_mut(entry_bb).insts_mut().remove(&alloc);
             crate::utils::safely_remove_inst_from_dfg(self.data.dfg_mut(), alloc);
         }
+    }
+
+    fn resolve(&self, mut val: Value) -> Value {
+        while let Some(&replacement) = self.replaced_phis.get(&val) {
+            val = replacement;
+        }
+        val
+    }
+
+    // 修复点：获取最终真正的 Value (转换为 Real Phi)
+    fn final_resolve(&self, val: Value, fake_to_real: &FxHashMap<Value, Value>) -> Value {
+        let resolved_fake = self.resolve(val);
+        *fake_to_real.get(&resolved_fake).unwrap_or(&resolved_fake)
     }
 
     fn write_variable(&mut self, variable: Value, block: BasicBlock, value: Value) {
@@ -177,7 +199,7 @@ impl<'a> SSAConstructor<'a> {
 
     fn read_variable(&mut self, variable: Value, block: BasicBlock) -> Value {
         if let Some(&val) = self.var_defs.get(&(block, variable)) {
-            return val;
+            return self.resolve(val);
         }
         self.read_variable_from_predecessors(variable, block)
     }
@@ -204,27 +226,13 @@ impl<'a> SSAConstructor<'a> {
         val
     }
 
-    // TODO: implement it in another way
     fn new_phi(&mut self, block: BasicBlock, variable: Value) -> Value {
-        let len = self.data.dfg().bb(block).params().len() + 1;
         let ty = self.var_types[&variable].clone();
-
-        // we have to create params with such length because
-        // user might get BlockArgRef's index from it
-        let mut dummy_params = vec![koopa::ir::Type::get_i32(); len];
-        dummy_params.push(ty);
-        let dummy = self.data.dfg_mut().new_bb().basic_block_with_params(None, dummy_params);
-        let my_arg = self.data.dfg_mut().bb_mut(dummy).params_mut().pop().unwrap();
-        // Just leave the dummy block in layout disconnected, or explicitly drop it
-        // We'll leave it without layout, which means it will be filtered out by IR builder.
-        // But to be clean we just remove it from DFG
-        self.data.dfg_mut().remove_bb(dummy);
-
-        self.data.dfg_mut().bb_mut(block).params_mut().push(my_arg);
-        self.bb_phi_vars.entry(block).or_default().push(variable);
-        self.phi_vars.insert(my_arg, variable);
-        self.phi_block.insert(my_arg, block);
-        my_arg
+        let phi = self.data.dfg_mut().new_value().undef(ty);
+        self.bb_phi_vars.entry(block).or_default().push((variable, phi));
+        self.phi_vars.insert(phi, variable);
+        self.phi_block.insert(phi, block);
+        phi
     }
 
     fn add_phi_operands(&mut self, block: BasicBlock, variable: Value, phi: Value) -> Value {
@@ -233,6 +241,8 @@ impl<'a> SSAConstructor<'a> {
         for pred in preds {
             let val = self.read_variable(variable, pred);
             operands.push((pred, val));
+            // 修复点：记录谁被这个 Phi 使用了
+            self.phi_users.entry(val).or_default().insert(phi);
         }
         self.phi_operands.insert(phi, operands);
         self.try_remove_trivial_phi(phi)
@@ -250,12 +260,13 @@ impl<'a> SSAConstructor<'a> {
     fn try_remove_trivial_phi(&mut self, phi: Value) -> Value {
         let ops = self.phi_operands.get(&phi).cloned().unwrap_or_default();
         let mut same: Option<Value> = None;
-        for &(_, op) in &ops {
+        for &(_, mut op) in &ops {
+            op = self.resolve(op); // 确保读取最新的值
             if op == phi || Some(op) == same {
                 continue;
             }
             if same.is_some() {
-                return phi; // not trivial
+                return phi; // 不平凡
             }
             same = Some(op);
         }
@@ -266,52 +277,44 @@ impl<'a> SSAConstructor<'a> {
             self.data.dfg_mut().new_value().undef(ty)
         });
 
-        // Resolve phi manually
-        // We can't actually remove block parameters due to index shifts
-        // but we replace all its known uses.
-        self.data.replace_all_uses_with(phi, same_val);
+        // 修复点：在并查集中记录替换路径
+        let old = self.replaced_phis.insert(phi, same_val);
 
-        // Update var_defs dict
-        let mut to_update = Vec::new();
-        for (k, v) in &self.var_defs {
-            if *v == phi {
-                to_update.push(*k);
+        // 修复点：清理 bb_phi_vars，防止生成僵尸参数
+        if let Some(block) = self.phi_block.get(&phi).copied() {
+            if let Some(vars) = self.bb_phi_vars.get_mut(&block) {
+                vars.retain(|&(_, p)| p != phi);
             }
         }
-        for k in to_update {
-            self.var_defs.insert(k, same_val);
-        }
 
-        // Update phi_operands locally
-        for (_, vals) in self.phi_operands.iter_mut() {
-            for v in vals.iter_mut() {
-                if v.1 == phi {
-                    v.1 = same_val;
+        if old != Some(same_val) {
+            // 递归检查它的使用者是否因此变得平凡
+            let users = self.phi_users.get(&phi).cloned().unwrap_or_default();
+            for u in users {
+                if u != phi {
+                    self.try_remove_trivial_phi(u);
                 }
             }
-        }
-
-        // Recursively remove
-        // Wait, what if someone uses this phi?
-        let users: Vec<_> = self
-            .data
-            .dfg()
-            .value(phi)
-            .used_by()
-            .iter()
-            .filter(|&&u| self.phi_operands.contains_key(&u))
-            .copied()
-            .collect();
-
-        for u in users {
-            self.try_remove_trivial_phi(u);
         }
 
         same_val
     }
 
-    fn rebuild_terminators(&mut self) {
+    fn rebuild_bb_params(&mut self) -> FxHashMap<Value, Value> {
+        let mut fake_to_real = FxHashMap::default();
+        for (&bb, variables) in &self.bb_phi_vars {
+            for &(var, fake_phi) in variables {
+                let ty = self.var_types[&var].clone();
+                let actual_phi = self.data.dfg_mut().append_bb_param(bb, ty);
+                fake_to_real.insert(fake_phi, actual_phi);
+            }
+        }
+        fake_to_real
+    }
+
+    fn rebuild_terminators(&mut self, fake_to_real: &FxHashMap<Value, Value>) {
         let blocks = self.data.layout().bbs().keys().copied().collect::<Vec<_>>();
+
         for src in blocks {
             let term = self.data.layout().bbs().node(&src).unwrap().insts().back_key().copied();
             if let Some(term) = term {
@@ -319,33 +322,40 @@ impl<'a> SSAConstructor<'a> {
                 match kind {
                     ValueKind::Jump(j) => {
                         let succ = j.target();
-                        let mut args = j.args().to_vec();
                         let vars = self.bb_phi_vars.get(&succ).cloned().unwrap_or_default();
-                        for var in vars {
-                            args.push(self.read_variable(var, src));
+                        if !vars.is_empty() {
+                            let mut args = j.args().to_vec();
+                            for (var, _) in vars {
+                                let val = self.read_variable(var, src);
+                                args.push(self.final_resolve(val, fake_to_real));
+                            }
+                            self.data.dfg_mut().replace_value_with(term).jump_with_args(succ, args);
                         }
-                        self.data.dfg_mut().replace_value_with(term).jump_with_args(succ, args);
                     }
                     ValueKind::Branch(b) => {
-                        let mut t_args = b.true_args().to_vec();
                         let t_vars =
                             self.bb_phi_vars.get(&b.true_bb()).cloned().unwrap_or_default();
-                        for var in t_vars {
-                            t_args.push(self.read_variable(var, src));
-                        }
-                        let mut f_args = b.false_args().to_vec();
                         let f_vars =
                             self.bb_phi_vars.get(&b.false_bb()).cloned().unwrap_or_default();
-                        for var in f_vars {
-                            f_args.push(self.read_variable(var, src));
+                        if !t_vars.is_empty() || !f_vars.is_empty() {
+                            let mut t_args = b.true_args().to_vec();
+                            for (var, _) in t_vars {
+                                let val = self.read_variable(var, src);
+                                t_args.push(self.final_resolve(val, fake_to_real));
+                            }
+                            let mut f_args = b.false_args().to_vec();
+                            for (var, _) in f_vars {
+                                let val = self.read_variable(var, src);
+                                f_args.push(self.final_resolve(val, fake_to_real));
+                            }
+                            self.data.dfg_mut().replace_value_with(term).branch_with_args(
+                                b.cond(),
+                                b.true_bb(),
+                                b.false_bb(),
+                                t_args,
+                                f_args,
+                            );
                         }
-                        self.data.dfg_mut().replace_value_with(term).branch_with_args(
-                            b.cond(),
-                            b.true_bb(),
-                            b.false_bb(),
-                            t_args,
-                            f_args,
-                        );
                     }
                     _ => {}
                 }
