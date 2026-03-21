@@ -236,11 +236,12 @@ impl SCCP {
                 // should replace branch with jump
                 if let ValueKind::Branch(branch) = data.dfg().value(usage).kind() {
                     let value = self.states.get(&value).unwrap().get().unwrap();
-                    let (target, args) = if *value != 0 {
+                    let (target, mut args) = if *value != 0 {
                         (branch.true_bb(), branch.true_args().to_vec())
                     } else {
                         (branch.false_bb(), branch.false_args().to_vec())
                     };
+                    replace_operands(&mut args, &v_map);
                     data.dfg_mut().replace_value_with(usage).jump_with_args(target, args);
                 } else {
                     let mut value_kind = data.dfg().value(usage).clone();

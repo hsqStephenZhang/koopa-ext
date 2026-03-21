@@ -119,7 +119,7 @@ impl FunctionDataExt for FunctionData {
 
         for usage in usages {
             let mut value_data = self.dfg().value(usage).clone();
-            if crate::utils::replace_operands(&mut value_data, &v_map) {
+            if replace_operands(&mut value_data, &v_map) {
                 self.dfg_mut().replace_value_with(usage).raw(value_data);
             }
         }
