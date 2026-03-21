@@ -6,6 +6,7 @@ use smallvec::SmallVec;
 
 use crate::ext::FunctionDataExt;
 use crate::graph::reachable::reachable;
+use crate::graph::terminator::TerminatorExt;
 use crate::graph::{Predecessors, Successors};
 use crate::utils::replace_operands;
 
@@ -52,8 +53,9 @@ impl FunctionPass for SimplifyCFG {
             });
 
             if let Some((bb, pred)) = target_pair
-                && merge_bb(data, pred, bb)
+                && try_merge_bb(data, pred, bb)
             {
+                tracing::debug!("mering {} into {}", data.dbg_bb(bb), data.dbg_bb(pred));
                 changed = true;
             }
 
@@ -66,11 +68,11 @@ impl FunctionPass for SimplifyCFG {
         loop {
             let mut changed = false;
 
-            let empty_bb = data
+            let empty_bbs = data
                 .layout()
                 .bbs()
                 .keys()
-                .find(|&bb| {
+                .filter(|&bb| {
                     let insts = data.layout().bbs().node(bb).unwrap().insts();
                     insts.len() == 1
                         && matches!(
@@ -78,12 +80,13 @@ impl FunctionPass for SimplifyCFG {
                             ValueKind::Jump(_)
                         )
                 })
-                .copied();
+                .copied()
+                .collect::<Vec<_>>();
 
-            if let Some(empty_bb) = empty_bb
-                && eliminate_empty_bb(data, empty_bb)
-            {
-                changed = true;
+            for empty_bb in empty_bbs {
+                if try_eliminate_empty_bb(data, empty_bb) {
+                    changed = true;
+                }
             }
 
             if !changed {
@@ -95,7 +98,7 @@ impl FunctionPass for SimplifyCFG {
 
 // merge all insts in `bb` into `pred` and remove `bb` from function's layout
 // returns if its successfully merged
-fn merge_bb(data: &mut koopa::ir::FunctionData, pred: BasicBlock, bb: BasicBlock) -> bool {
+fn try_merge_bb(data: &mut koopa::ir::FunctionData, pred: BasicBlock, bb: BasicBlock) -> bool {
     let preds: SmallVec<[BasicBlock; 4]> = data.preds(bb).collect();
     let satisfy = preds.len() == 1 && preds[0] == pred && data.succs(pred).count() == 1;
     if !satisfy {
@@ -117,9 +120,18 @@ fn merge_bb(data: &mut koopa::ir::FunctionData, pred: BasicBlock, bb: BasicBlock
     };
     let v_map = params.into_iter().zip(args).collect::<FxHashMap<_, _>>();
 
+    for &param in v_map.keys() {
+        for usage in data.dfg().value(param).used_by().clone() {
+            let mut value_kind = data.dfg().value(usage).clone();
+            assert!(replace_operands(&mut value_kind, &v_map));
+            data.dfg_mut().replace_value_with(usage).raw(value_kind);
+        }
+        assert!(data.dfg().value(param).used_by().is_empty());
+    }
+
     // 2. add all instructions in `bb` to `pred`
     //    fix the usage of BlockParams of `bb` in these insts
-    //    before:
+    // before:
     //
     // %pred:
     //  ...
@@ -132,6 +144,7 @@ fn merge_bb(data: &mut koopa::ir::FunctionData, pred: BasicBlock, bb: BasicBlock
     //  jump %next(%param2)
     //
     // after:
+    //
     // %pred:
     //  ...
     //  %10 = add %arg1, %arg2
@@ -157,11 +170,16 @@ fn merge_bb(data: &mut koopa::ir::FunctionData, pred: BasicBlock, bb: BasicBlock
 
 // eliminate empty bb, update its predecessor's terminator
 // returns if the structure is changed
-fn eliminate_empty_bb(data: &mut koopa::ir::FunctionData, empty_bb: BasicBlock) -> bool {
+fn try_eliminate_empty_bb(data: &mut koopa::ir::FunctionData, empty_bb: BasicBlock) -> bool {
+    // DO NOT eliminate the entry block, as it receives control flow from outside the function.
+    if Some(empty_bb) == data.layout().entry_bb() {
+        return false;
+    }
+
     let (target_bb, jump_args) = {
         let node = data.layout().bbs().node(&empty_bb).unwrap();
-        let jump_inst_val = node.insts().back_key().unwrap();
-        let jump_inst = data.dfg().value(*jump_inst_val);
+        let jump_inst_val = *node.insts().back_key().unwrap();
+        let jump_inst = data.dfg().value(jump_inst_val);
 
         match jump_inst.kind() {
             ValueKind::Jump(jump) => {
@@ -176,6 +194,8 @@ fn eliminate_empty_bb(data: &mut koopa::ir::FunctionData, empty_bb: BasicBlock) 
         return false;
     }
 
+    let params = data.dfg().bb(empty_bb).params().iter().copied().collect::<SmallVec<[Value; 4]>>();
+
     let preds: SmallVec<[BasicBlock; 4]> = data.preds(empty_bb).collect();
     if preds.is_empty() {
         return false;
@@ -183,12 +203,8 @@ fn eliminate_empty_bb(data: &mut koopa::ir::FunctionData, empty_bb: BasicBlock) 
 
     let mut succ_cnt = 0;
 
-    let params = data.dfg().bb(empty_bb).params().iter().copied().collect::<SmallVec<[Value; 4]>>();
-
     for pred in &preds {
-        let pred_terminator_val =
-            *data.layout().bbs().node(pred).unwrap().insts().back_key().unwrap();
-        let mut new_terminator_data = data.dfg().value(pred_terminator_val).clone();
+        let (pred_terminator_val, mut new_terminator_data) = data.terminator_raw(*pred);
 
         match new_terminator_data.kind_mut() {
             ValueKind::Jump(jump) => {
@@ -200,7 +216,7 @@ fn eliminate_empty_bb(data: &mut koopa::ir::FunctionData, empty_bb: BasicBlock) 
                     // %empty_bb(%param1, %param2):
                     //   jump %next(%v1, %v2, %param2)
                     //
-
+                    //
                     // after:
                     //
                     // %pred:
@@ -211,6 +227,9 @@ fn eliminate_empty_bb(data: &mut koopa::ir::FunctionData, empty_bb: BasicBlock) 
                         params.clone().into_iter().zip(prev_args).collect::<FxHashMap<_, _>>();
                     let mut final_args = jump_args.clone();
                     replace_operands(&mut final_args, &v_map);
+                    for (param, arg) in &v_map {
+                        data.replace_all_uses_with(*param, *arg);
+                    }
 
                     data.dfg_mut()
                         .replace_value_with(pred_terminator_val)
@@ -226,6 +245,9 @@ fn eliminate_empty_bb(data: &mut koopa::ir::FunctionData, empty_bb: BasicBlock) 
                         params.clone().into_iter().zip(prev_args).collect::<FxHashMap<_, _>>();
                     let mut final_args = jump_args.clone();
                     replace_operands(&mut final_args, &v_map);
+                    for (param, arg) in &v_map {
+                        data.replace_all_uses_with(*param, *arg);
+                    }
 
                     (target_bb, final_args)
                 } else {
@@ -239,6 +261,9 @@ fn eliminate_empty_bb(data: &mut koopa::ir::FunctionData, empty_bb: BasicBlock) 
                         params.clone().into_iter().zip(prev_args).collect::<FxHashMap<_, _>>();
                     let mut final_args = jump_args.clone();
                     replace_operands(&mut final_args, &v_map);
+                    for (param, arg) in &v_map {
+                        data.replace_all_uses_with(*param, *arg);
+                    }
 
                     (target_bb, final_args)
                 } else {
@@ -262,11 +287,13 @@ fn eliminate_empty_bb(data: &mut koopa::ir::FunctionData, empty_bb: BasicBlock) 
         };
     }
 
-    if succ_cnt == preds.len() {
+    let fully_eliminated = succ_cnt == preds.len() && succ_cnt != 0;
+
+    if fully_eliminated {
         data.remove_bb_insts(empty_bb);
     }
 
-    succ_cnt != 0
+    succ_cnt > 0
 }
 
 #[cfg(test)]
@@ -274,10 +301,13 @@ mod tests {
     use koopa::back::koopa::Visitor as KoopaVisitor;
     use koopa::back::{NameManager, Visitor};
     use koopa::front::Driver;
+    use tracing::level_filters::LevelFilter;
 
     use super::*;
+    use crate::dbg::setup_trace;
 
     fn apply_pass(ir_text: &str, debug_on: bool) {
+        setup_trace(Some(LevelFilter::TRACE));
         let driver = Driver::from(ir_text);
         let mut program = driver.generate_program().unwrap();
         let func_id = *program.funcs().keys().next().unwrap();
@@ -294,13 +324,20 @@ mod tests {
     }
 
     fn apply_pass_and_count_bbs(ir_text: &str) -> usize {
+        setup_trace(Some(LevelFilter::TRACE));
         let driver = Driver::from(ir_text);
         let mut program = driver.generate_program().unwrap();
         let func_id = *program.funcs().keys().next().unwrap();
         let mut pass = SimplifyCFG;
         let func_data = program.func_mut(func_id);
         pass.run_on(func_id, func_data);
-        func_data.layout().bbs().len()
+
+        let mut visitor = KoopaVisitor;
+        let mut nm = NameManager::new();
+        let mut w = std::io::stdout();
+        visitor.visit(&mut w, &mut nm, &program).unwrap();
+
+        program.func_mut(func_id).layout().bbs().len()
     }
 
     #[test]

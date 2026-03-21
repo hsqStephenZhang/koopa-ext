@@ -2,6 +2,7 @@ use koopa::ir::builder::{LocalInstBuilder, ValueBuilder};
 use koopa::ir::{BasicBlock, FunctionData, Type, Value, ValueKind};
 use rustc_hash::{FxHashMap, FxHashSet};
 
+use crate::dbg::{BasicBlockWrapper, ValueKindDisplay};
 use crate::graph::DirectedGraph;
 use crate::utils::replace_operands;
 
@@ -29,9 +30,23 @@ pub trait FunctionDataExt {
     /// remove basic block and all its params, instructions
     /// will replace all usages of the instructions with `undef`
     fn remove_bb_insts(&mut self, bb: BasicBlock);
+
+    /// Debug for `koopa::ir::BasicBlock`
+    fn dbg_bb(&self, bb: BasicBlock) -> impl std::fmt::Display;
+
+    /// Debug for `koopa::ir::Value`
+    fn dbg_value(&self, value: Value) -> impl std::fmt::Display;
 }
 
 impl FunctionDataExt for FunctionData {
+    fn dbg_bb(&self, bb: BasicBlock) -> impl std::fmt::Display {
+        BasicBlockWrapper::new(bb, self.dfg())
+    }
+
+    fn dbg_value(&self, value: Value) -> impl std::fmt::Display {
+        ValueKindDisplay::new(self.dfg(), value)
+    }
+
     fn get_value_by_name(&self, name: &str) -> Option<Value> {
         self.dfg().values().iter().find(|(_, v)| v.name().as_deref() == Some(name)).map(|(k, _)| *k)
     }

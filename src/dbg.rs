@@ -151,3 +151,39 @@ impl ValueKindDisplay<'_> {
         Ok(())
     }
 }
+
+pub struct BasicBlockWrapper<'d> {
+    bb: BasicBlock,
+    dfg: &'d DataFlowGraph,
+}
+
+impl<'b> BasicBlockWrapper<'b> {
+    pub fn new(bb: BasicBlock, dfg: &'b DataFlowGraph) -> Self {
+        Self { bb, dfg }
+    }
+}
+
+impl std::fmt::Display for BasicBlockWrapper<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(name) = self.dfg.bb(self.bb).name().as_ref() {
+            f.write_str(name)
+        } else {
+            f.write_str(&format!("{:?}", self.bb))
+        }
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn setup_trace(level: Option<tracing::level_filters::LevelFilter>) {
+    use tracing_subscriber::EnvFilter;
+
+    static INIT: std::sync::Once = std::sync::Once::new();
+
+    INIT.call_once(|| {
+        if let Some(level) = level {
+            tracing_subscriber::fmt().with_max_level(level).init();
+        } else {
+            tracing_subscriber::fmt().with_env_filter(EnvFilter::from_default_env()).init();
+        }
+    });
+}

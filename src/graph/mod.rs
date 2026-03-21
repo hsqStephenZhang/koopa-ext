@@ -38,7 +38,7 @@ impl Predecessors for koopa::ir::FunctionData {
     fn preds(&self, cur: Self::Node) -> impl Iterator<Item = Self::Node> {
         let mut res: smallvec::SmallVec<[Self::Node; 3]> = smallvec::SmallVec::new();
         for bb in self.dfg().bb(cur).used_by().iter().filter_map(|v| self.layout().parent_bb(*v)) {
-            if !res.contains(&bb) {
+            if self.layout().bbs().contains_key(&bb) && !res.contains(&bb) {
                 res.push(bb);
             }
         }
@@ -53,14 +53,28 @@ pub trait Successors: DirectedGraph {
 impl Successors for koopa::ir::FunctionData {
     fn succs(&self, cur: Self::Node) -> impl Iterator<Item = Self::Node> {
         let mut res: smallvec::SmallVec<[BasicBlock; 2]> = smallvec::SmallVec::new();
+        if !self.layout().bbs().contains_key(&cur) {
+            return res.into_iter();
+        }
         let last_inst = self.layout().bbs().node(&cur).unwrap().insts().back_key().cloned();
         if let Some(inst) = last_inst {
             match self.dfg().value(inst).kind() {
                 koopa::ir::ValueKind::Branch(branch) => {
-                    res.push(branch.true_bb());
-                    res.push(branch.false_bb());
+                    let bb1 = branch.true_bb();
+                    let bb2 = branch.false_bb();
+                    if self.layout().bbs().contains_key(&bb1) {
+                        res.push(bb1);
+                    }
+                    if self.layout().bbs().contains_key(&bb2) {
+                        res.push(bb2);
+                    }
                 }
-                koopa::ir::ValueKind::Jump(jump) => res.push(jump.target()),
+                koopa::ir::ValueKind::Jump(jump) => {
+                    let bb1 = jump.target();
+                    if self.layout().bbs().contains_key(&bb1) {
+                        res.push(bb1);
+                    }
+                }
                 _ => {}
             }
         }
