@@ -7,7 +7,7 @@ use smallvec::SmallVec;
 use crate::ext::FunctionDataExt;
 use crate::graph::reachable::reachable;
 use crate::graph::{Predecessors, Successors};
-use crate::utils::{replace_operands, safely_remove_inst_from_dfg};
+use crate::utils::replace_operands;
 
 /// simplify and canonicalize the CFG of a function
 /// will:
@@ -263,12 +263,9 @@ fn eliminate_empty_bb(data: &mut koopa::ir::FunctionData, empty_bb: BasicBlock) 
     }
 
     if succ_cnt == preds.len()
-        && let Some((_, node)) = data.layout_mut().bbs_mut().remove(&empty_bb)
+        && let Some(_) = data.layout_mut().bbs_mut().remove(&empty_bb)
     {
-        for (inst, _) in node.insts().iter() {
-            safely_remove_inst_from_dfg(data.dfg_mut(), *inst);
-        }
-        data.dfg_mut().remove_bb(empty_bb);
+        data.remove_bb_insts(empty_bb);
     }
 
     succ_cnt != 0

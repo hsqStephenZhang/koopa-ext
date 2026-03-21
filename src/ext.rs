@@ -110,7 +110,8 @@ impl FunctionDataExt for FunctionData {
     }
 
     fn remove_bb_insts(&mut self, bb: BasicBlock) {
-        let mut removed_insts: FxHashMap<Value, Value> = FxHashMap::default();
+        // instructions + bb params
+        let mut removed_values: FxHashMap<Value, Value> = FxHashMap::default();
 
         let params = self.dfg().bb(bb).params().iter().copied().collect::<FxHashSet<_>>();
         if let Some((_, node)) = self.layout_mut().bbs_mut().remove(&bb) {
@@ -118,22 +119,23 @@ impl FunctionDataExt for FunctionData {
                 let ty = self.dfg().value(inst).ty().clone();
                 if !ty.is_unit() {
                     let undef = self.dfg_mut().new_value().undef(ty);
-                    removed_insts.insert(inst, undef);
+                    removed_values.insert(inst, undef);
                 }
             }
         }
 
-        for &inst in removed_insts.keys() {
-            for usage in self.dfg().value(inst).used_by().clone() {
+        for &value in removed_values.keys() {
+            for usage in self.dfg().value(value).used_by().clone() {
                 let mut value_kind = self.dfg().value(usage).clone();
-                assert!(crate::utils::replace_operands(&mut value_kind, &removed_insts));
+                assert!(crate::utils::replace_operands(&mut value_kind, &removed_values));
                 self.dfg_mut().replace_value_with(usage).raw(value_kind);
             }
+            assert!(self.dfg().value(value).used_by().is_empty());
         }
 
         // for params, we need only replace them with undef
         // the removal will be done within `dfg_mut().remove_bb(bb)`
-        for &inst in removed_insts.keys().filter(|inst| !params.contains(inst)) {
+        for &inst in removed_values.keys().filter(|inst| !params.contains(inst)) {
             self.dfg_mut().remove_value(inst);
         }
 
