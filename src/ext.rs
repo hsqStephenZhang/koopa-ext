@@ -3,6 +3,7 @@ use koopa::ir::{BasicBlock, FunctionData, Type, Value, ValueKind};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::graph::DirectedGraph;
+use crate::utils::replace_operands;
 
 pub trait FunctionDataExt {
     fn get_value_by_name(&self, name: &str) -> Option<Value>;
@@ -115,7 +116,7 @@ impl FunctionDataExt for FunctionData {
 
         let params = self.dfg().bb(bb).params().iter().copied().collect::<FxHashSet<_>>();
         if let Some((_, node)) = self.layout_mut().bbs_mut().remove(&bb) {
-            for &inst in node.insts().keys().chain(params.iter()) {
+            for &inst in node.insts().keys() {
                 let ty = self.dfg().value(inst).ty().clone();
                 if !ty.is_unit() {
                     let undef = self.dfg_mut().new_value().undef(ty);
@@ -124,10 +125,18 @@ impl FunctionDataExt for FunctionData {
             }
         }
 
+        for &param in &params {
+            let ty = self.dfg().value(param).ty().clone();
+            if !ty.is_unit() {
+                let undef = self.dfg_mut().new_value().undef(ty);
+                removed_values.insert(param, undef);
+            }
+        }
+
         for &value in removed_values.keys() {
             for usage in self.dfg().value(value).used_by().clone() {
                 let mut value_kind = self.dfg().value(usage).clone();
-                assert!(crate::utils::replace_operands(&mut value_kind, &removed_values));
+                assert!(replace_operands(&mut value_kind, &removed_values));
                 self.dfg_mut().replace_value_with(usage).raw(value_kind);
             }
             assert!(self.dfg().value(value).used_by().is_empty());

@@ -262,9 +262,7 @@ fn eliminate_empty_bb(data: &mut koopa::ir::FunctionData, empty_bb: BasicBlock) 
         };
     }
 
-    if succ_cnt == preds.len()
-        && let Some(_) = data.layout_mut().bbs_mut().remove(&empty_bb)
-    {
+    if succ_cnt == preds.len() {
         data.remove_bb_insts(empty_bb);
     }
 

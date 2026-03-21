@@ -77,6 +77,14 @@ impl ValuesVisit for ValueData {
                     visitor(ret);
                 }
             }
+            ValueKind::Aggregate(aggregate) => {
+                for value in aggregate.elems_mut() {
+                    visitor(value);
+                }
+            }
+            ValueKind::GlobalAlloc(global_alloc) => {
+                visitor(global_alloc.init_mut());
+            }
             _ => {}
         }
     }
