@@ -205,6 +205,9 @@ impl LoopUnRoll {
         if loops.latches(data, lp).len() != 1 {
             return UnrollVerdict::Not;
         }
+        if loops.exits(data, lp).count() != 1 {
+            return UnrollVerdict::Not;
+        }
 
         let header = bb.header();
         let (_, terminator_data) = data.terminator_raw(header);
