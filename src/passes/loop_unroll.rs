@@ -64,6 +64,7 @@ impl FunctionPass for LoopUnRoll {
                     assert_eq!(latches.len(), 1);
                     let latch = latches[0];
                     let header = loops.loops()[&lp].header();
+                    let origin_params = data.dfg().bb(header).params().to_vec();
                     let exits = loops.exits(data, lp).collect::<Vec<_>>();
                     assert_eq!(exits.len(), 1);
                     let exit = exits[0];
@@ -97,14 +98,14 @@ impl FunctionPass for LoopUnRoll {
                             .collect::<FxHashMap<_, _>>();
 
                         let new_header = bb_map[&header];
-                        let origin_params = data.dfg().bb(header).params();
                         let new_params = data.dfg().bb(new_header).params();
-                        for (old, new) in origin_params.into_iter().zip(new_params) {
+                        for (old, new) in origin_params.iter().zip(new_params) {
                             v_map.insert(*old, *new);
                         }
 
-                        for (old, new) in &bb_map {
-                            clone_bb_in_same_func(data, &mut v_map, &bb_map, *old, *new);
+                        for old in cloned_bbs.iter() {
+                            let new = bb_map[old];
+                            clone_bb_in_same_func(data, &mut v_map, &bb_map, *old, new);
                         }
 
                         // prev_latch -> current_header
@@ -124,7 +125,7 @@ impl FunctionPass for LoopUnRoll {
                         //  1. for the first cnt-1 unroll, we need to turn it into `jump %next`
                         //  2. for the last unroll, we need to turn it into `jump %exit`
                         let (br, br_data) = data.terminator_raw(new_header);
-                        let (new_target, args) = match br_data.kind() {
+                        let (new_target, mut args) = match br_data.kind() {
                             ValueKind::Branch(branch) => {
                                 let cond = if i + 1 == cnt {
                                     branch.true_bb() != exit
@@ -132,16 +133,15 @@ impl FunctionPass for LoopUnRoll {
                                     branch.true_bb() == exit
                                 };
                                 if cond {
-                                    (branch.false_bb(), branch.false_args())
+                                    (branch.false_bb(), branch.false_args().to_vec())
                                 } else {
-                                    (branch.true_bb(), branch.true_args())
+                                    (branch.true_bb(), branch.true_args().to_vec())
                                 }
                             }
                             _ => unreachable!(),
                         };
-                        data.dfg_mut()
-                            .replace_value_with(br)
-                            .jump_with_args(new_target, args.to_vec());
+                        replace_operands(&mut args, &v_map);
+                        data.dfg_mut().replace_value_with(br).jump_with_args(new_target, args);
 
                         last_bb_map = Some(bb_map);
 
@@ -275,20 +275,25 @@ mod tests {
         let ir = r#"
 fun @test(): i32 {
 %entry:
-  jump %header(0, 0)
+  jump %cond(0, 0)
 
-%header(%i: i32, %sum: i32):
-  %2 = lt %i, 5
-  br %2, %body, %exit
+%cond(%0: i32, %1: i32):
+  %2 = lt %0, 5
+  br %2, %body, %dedicate_exit(%1)
 
 %body:
-  %new_sum = add %sum, %i
-  %next_i = add %i, 2
-  
-  jump %header(%next_i, %new_sum)
+  %5 = add %1, %0
+  %6 = add %0, 1
+  jump %foo1
 
-%exit:
-  ret %sum
+%foo1:
+  jump %cond(%6, %5)
+
+%foo2(%8: i32):
+  ret %8
+
+%dedicate_exit(%10: i32):
+  jump %foo2(%10)
 }
 "#;
         apply_pass(ir, true);
