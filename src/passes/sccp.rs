@@ -25,7 +25,7 @@ pub struct SCCP {
     /// FlattenValue::Top : unknown const
     /// FlattenValue::Concrete : known const
     /// FlattenValue::Bottom : not a constant
-    values: FxHashMap<Value, FlattenValue<i32>>,
+    states: FxHashMap<Value, FlattenValue<i32>>,
 
     /// worklist1
     bb_worklist: VecDeque<BasicBlock>,
@@ -42,7 +42,7 @@ impl FunctionPass for SCCP {
 
         // init the state and worklist
         for param in data.params() {
-            self.values.insert(*param, FlattenValue::Bottom);
+            self.states.insert(*param, FlattenValue::Bottom);
         }
         self.executable_bbs.insert(entry);
         self.bb_worklist.push_back(entry);
@@ -167,7 +167,7 @@ impl SCCP {
             let mut old = self.lattice_value(param, data);
             let arg = self.lattice_value(arg, data);
             if old.meet(arg) {
-                self.values.insert(param, old);
+                self.states.insert(param, old);
                 self.update_value_worklist(param, data);
             }
         }
@@ -184,7 +184,7 @@ impl SCCP {
     }
 
     fn lattice_value(&self, value: Value, data: &koopa::ir::FunctionData) -> FlattenValue<i32> {
-        self.values.get(&value).cloned().unwrap_or_else(|| {
+        self.states.get(&value).cloned().unwrap_or_else(|| {
             if let Some(value_data) = data.dfg().values().get(&value)
                 && matches!(value_data.kind(), ValueKind::Integer(_) | ValueKind::ZeroInit(_))
             {
@@ -198,8 +198,8 @@ impl SCCP {
     /// returns if the original value is not the same as the old one
     fn update(&mut self, value: Value, lattice_value: FlattenValue<i32>) -> bool {
         // by default it's Top
-        self.values.entry(value).or_insert(FlattenValue::Top);
-        let origin = self.values.insert(value, lattice_value).unwrap();
+        self.states.entry(value).or_insert(FlattenValue::Top);
+        let origin = self.states.insert(value, lattice_value).unwrap();
         origin != lattice_value
     }
 
@@ -208,7 +208,7 @@ impl SCCP {
         let mut block_args: HashMap<BasicBlock, SmallVec<[usize; 4]>, _> = FxHashMap::default();
 
         // fill the vmap and repalce values that belong to the Function
-        for (&value, lat) in &self.values {
+        for (&value, lat) in &self.states {
             // only handle local values
             if !data.has(value) {
                 continue;
@@ -218,9 +218,12 @@ impl SCCP {
                 let kind = data.dfg().value(value).kind();
                 if kind.is_local_inst() {
                     v_map.insert(value, new_value);
-                } else if let ValueKind::BlockArgRef(arg_ref) = kind {
+                } else if let ValueKind::BlockArgRef(_) = kind {
                     let bb = data.bb_of_arg(value).unwrap();
-                    block_args.entry(bb).or_default().push(arg_ref.index());
+                    // TODO: replace it with BlockArgRef's index?
+                    let actual_idx =
+                        data.dfg().bb(bb).params().iter().position(|&p| p == value).unwrap();
+                    block_args.entry(bb).or_default().push(actual_idx);
                 }
             }
         }
@@ -232,7 +235,7 @@ impl SCCP {
             for usage in data.dfg().value(value).used_by().clone() {
                 // should replace branch with jump
                 if let ValueKind::Branch(branch) = data.dfg().value(usage).kind() {
-                    let value = self.values.get(&value).unwrap().get().unwrap();
+                    let value = self.states.get(&value).unwrap().get().unwrap();
                     let (target, args) = if *value != 0 {
                         (branch.true_bb(), branch.true_args().to_vec())
                     } else {
@@ -262,7 +265,7 @@ impl SCCP {
                 let new = data
                     .dfg_mut()
                     .new_value()
-                    .integer(*self.values.get(&old).unwrap().get().unwrap());
+                    .integer(*self.states.get(&old).unwrap().get().unwrap());
 
                 let v_map = FxHashMap::from_iter([(old, new)]);
 
@@ -416,19 +419,77 @@ fun @merge_test(%input: i32): i32 {
     #[test]
     fn test_sccp_complex_call() {
         let ir = r#"
-fun @sccp_loop_test(): i32 {
+fun @main(): i32 {
 %entry:
-    jump %loop(0)
+  jump %or_else
 
-%loop(%i: i32):
-    %cond = lt %i, 1
-    br %cond, %body, %exit(1)
+%or_else:
+  %0 = or 0, 0
+  %1 = ne %0, 0
+  br %1, %then, %else
 
-%body:
-    jump %exit(123)
+%then:
+  jump %2
 
-%exit(%res: i32):
-    ret %res
+%2:
+  jump %then_end(0, 3, 2)
+
+%else:
+  %a = alloc i32
+  store 1, %a
+  %3 = load %a
+  jump %or_else_0
+
+%or_else_0:
+  %4 = or %3, 0
+  %5 = ne %4, 0
+  br %5, %then_0, %else_0
+
+%then_0:
+  jump %6
+
+%6:
+  jump %7(4, 0, 3)
+
+%else_0:
+  jump %7(1, 0, 4)
+
+%7(%8: i32, %9: i32, %10: i32):
+  %11 = load %a
+  %12 = eq %11, 0
+  br %12, %then_1, %else_1
+
+%then_1:
+  ret 1
+
+%then_end_0:
+  jump %then_end(undef, undef, undef)
+
+%else_1:
+  %13 = load %a
+  %14 = eq %13, 0
+  jump %and_else
+
+%and_else:
+  %15 = load %a
+  %16 = sub 0, 1
+  %17 = eq %15, %16
+  %18 = ne %14, 0
+  %19 = ne %17, 0
+  %20 = and %18, %19
+  br %20, %then_2, %then_end(0, %8, %10)
+
+%then_2:
+  ret 2
+
+%then_end(%21: i32, %22: i32, %23: i32):
+  %24 = add %21, 0
+  %25 = add %24, %22
+  %26 = add %25, %23
+  ret %26
+
+%27:
+  ret 0
 }
         "#;
         apply_pass(ir, true);
