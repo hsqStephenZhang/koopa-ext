@@ -64,7 +64,6 @@ impl FunctionPass for LoopUnRoll {
                     assert_eq!(latches.len(), 1);
                     let latch = latches[0];
                     let header = loops.loops()[&lp].header();
-                    let origin_params = data.dfg().bb(header).params().to_vec();
                     let exits = loops.exits(data, lp).collect::<Vec<_>>();
                     assert_eq!(exits.len(), 1);
                     let exit = exits[0];
@@ -77,9 +76,8 @@ impl FunctionPass for LoopUnRoll {
                         let mut v_map = FxHashMap::default();
 
                         // the last unroll should only clone the header
-                        // and make it jump to the exit
+                        // and jump to the exit directly
                         let cloned_bbs = if i + 1 == cnt { &[header] } else { &loop_bbs[..] };
-
                         let bb_map = cloned_bbs
                             .iter()
                             .map(|old| {
@@ -98,11 +96,18 @@ impl FunctionPass for LoopUnRoll {
                             .collect::<FxHashMap<_, _>>();
 
                         let new_header = bb_map[&header];
-                        let new_params = data.dfg().bb(new_header).params();
-                        for (old, new) in origin_params.iter().zip(new_params) {
-                            v_map.insert(*old, *new);
+
+                        // v_map must contains all the BB params mappings
+                        // to make it work
+                        for (&old_bb, &new_bb) in &bb_map {
+                            let old_params = data.dfg().bb(old_bb).params();
+                            let new_params = data.dfg().bb(new_bb).params();
+                            for (old, new) in old_params.into_iter().zip(new_params) {
+                                v_map.insert(*old, *new);
+                            }
                         }
 
+                        // itherate by RPO to make sure that def is handled before use
                         for old in cloned_bbs.iter() {
                             let new = bb_map[old];
                             clone_bb_in_same_func(data, &mut v_map, &bb_map, *old, new);
@@ -298,4 +303,56 @@ fun @test(): i32 {
 "#;
         apply_pass(ir, true);
     }
+
+    #[test]
+    fn test_arr() {
+        let ir = r#"
+fun @test(): i32 {
+%entry:
+  jump %cond(0, 0)
+
+%cond(%0: i32, %1: i32):
+  %2 = lt %0, 2
+  br %2, %body, %dedicate_exit(%1)
+
+%3(%4: i32):
+  jump %5(undef)
+
+%body:
+  %6 = eq %0, 1
+  br %6, %then, %else
+
+%then:
+  %7 = add %1, 1
+  jump %8
+
+%8:
+  jump %9(%0, %7)
+
+%else:
+  %10 = add %1, %0
+  jump %9(%0, %10)
+
+%9(%11: i32, %12: i32):
+  %13 = add %0, 1
+  jump %14
+
+%14:
+  jump %cond(%13, %12)
+
+%5(%15: i32):
+  ret %15
+
+%16:
+  ret 0
+
+%dedicate_exit(%17: i32):
+  jump %5(%17)
+}
+        "#;
+        apply_pass(ir, true);
+    }
+
+    // #[test]
+    // fn
 }
