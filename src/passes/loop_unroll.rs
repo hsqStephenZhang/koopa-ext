@@ -4,6 +4,7 @@ use koopa::opt::FunctionPass;
 use rustc_hash::FxHashMap;
 
 use crate::ext::FunctionDataExt;
+use crate::graph::Successors;
 use crate::graph::dom_tree::DomTree;
 use crate::graph::loops::{Loop, LoopsAnalysis};
 use crate::graph::scalar_evolution::ScalarEvolutionAnalysis;
@@ -214,6 +215,15 @@ impl LoopUnRoll {
             return UnrollVerdict::Not;
         }
 
+        let exiting_blocks = loops.loop_to_bb()[&lp]
+            .iter()
+            .filter(|&&bb| data.succs(bb).any(|succ| !loops.contains(lp, succ)))
+            .count();
+
+        if exiting_blocks != 1 {
+            return UnrollVerdict::Not; // Prevents loops with early breaks from unrolling
+        }
+
         // the loop cannot have any alloc
         for &bb in &loops.loop_to_bb()[&lp] {
             for inst in data.insts(bb) {
@@ -370,6 +380,28 @@ fun @test(): i32 {
         apply_pass(ir, true);
     }
 
-    // #[test]
-    // fn
+    #[test]
+    fn test_break() {
+        let ir = r#"fun @test(): i32 {
+%entry:
+  jump %while_entry(0)
+
+%while_entry(%0: i32):
+  %1 = lt %0, 10
+  br %1, %while_body, %while_end
+
+%while_body:
+  %2 = eq %0, 5
+  br %2, %while_end, %end
+
+%while_end:
+  ret %0
+
+%end:
+  %next_i = add %0, 1
+  jump %while_entry(%next_i)
+}
+  "#;
+        apply_pass(ir, true);
+    }
 }
