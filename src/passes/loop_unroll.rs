@@ -215,6 +215,11 @@ impl LoopUnRoll {
             return UnrollVerdict::Not;
         }
 
+        // extra restrictions
+        if !matches!(data.terminator_raw(loops.latches(data, lp)[0]).1.kind(), ValueKind::Jump(_)) {
+            return UnrollVerdict::Not;
+        }
+
         let exiting_blocks = loops.loop_to_bb()[&lp]
             .iter()
             .filter(|&&bb| data.succs(bb).any(|succ| !loops.contains(lp, succ)))
