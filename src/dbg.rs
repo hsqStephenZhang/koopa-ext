@@ -116,6 +116,10 @@ impl fmt::Display for ValueKindDisplay<'_> {
 
 impl ValueKindDisplay<'_> {
     fn fmt_value(&self, value: Value, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if !self.dfg.values().contains_key(&value) {
+            return write!(f, "%NOT_FOUND({:x?})", value);
+        }
+
         let data = self.dfg.value(value);
         if data.kind().is_const() {
             write!(f, "{}", data.kind().display(self.dfg))

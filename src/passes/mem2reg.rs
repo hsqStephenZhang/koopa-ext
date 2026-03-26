@@ -161,9 +161,15 @@ impl<'a> SSAConstructor<'a> {
         self.rebuild_terminators(&fake_to_real_phi);
 
         // 6. 替换所有的 Loads
+        let mut load_replacements = FxHashMap::default();
         for (block, load, val) in loads_to_replace {
-            let real_val = self.final_resolve(val, &fake_to_real_phi);
+            let mut resolved_val = val;
+            while let Some(&v) = load_replacements.get(&resolved_val) {
+                resolved_val = v;
+            }
+            let real_val = self.final_resolve(resolved_val, &fake_to_real_phi);
             self.data.replace_all_uses_with(load, real_val);
+            load_replacements.insert(load, real_val);
             self.data.layout_mut().bb_mut(block).insts_mut().remove(&load);
             crate::utils::safely_remove_inst_from_dfg(self.data.dfg_mut(), load);
         }
@@ -450,6 +456,23 @@ fun @main(): i32 {
 %end:
     %res = load %i
     ret %res
+}
+"#;
+        apply_pass(ir, true);
+    }
+
+    #[test]
+    fn test_mem2reg_cascade() {
+        let ir = r#"
+fun @main(): i32 {
+%entry:
+    %a = alloc i32
+    store 10, %a
+    %b = alloc i32
+    %v = load %a
+    store %v, %b
+    %v2 = load %b
+    ret %v2
 }
 "#;
         apply_pass(ir, true);
