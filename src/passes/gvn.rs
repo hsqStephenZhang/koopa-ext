@@ -1,21 +1,21 @@
+use std::hash::{Hash, Hasher};
+
 use koopa::ir::builder::ValueBuilder;
 use koopa::ir::{BasicBlock, BinaryOp, FunctionData, Value, ValueKind};
 use koopa::opt::FunctionPass;
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::{FxHashMap, FxHasher};
 use smallvec::SmallVec;
 
 use crate::graph::dom_tree::DomTree;
-use crate::graph::traverse::reverse_post_order;
 use crate::utils::replace_operands;
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 enum ExprOp {
-    /// binary operation
     Bin(BinaryOp),
 }
 
 impl ExprOp {
-    fn is_commutive(&self) -> bool {
+    fn is_commutative(&self) -> bool {
         match self {
             ExprOp::Bin(op) => matches!(
                 op,
@@ -31,145 +31,64 @@ impl ExprOp {
     }
 }
 
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
-pub struct EqClassId(u32);
-
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 struct ExprData {
-    operands: SmallVec<[EqClassId; 3]>,
     op: ExprOp,
+    operands: SmallVec<[Value; 3]>,
 }
 
 impl ExprData {
     fn canonicalize(&mut self) {
-        if self.op.is_commutive() {
-            self.operands.sort();
+        if self.op.is_commutative() {
+            self.operands.sort_by_key(|v| {
+                let mut hasher = FxHasher::default();
+                v.hash(&mut hasher);
+                hasher.finish()
+            });
         }
     }
 }
 
-#[derive(Clone, Debug)]
-struct EquivalentClass {
-    /// leader of the the class,
-    /// must dominates all other members
-    leader: Value,
-    /// member of the e-class, includes the leader itself
-    members: FxHashSet<Value>,
+struct ScopedExprTable {
+    table: FxHashMap<ExprData, Value>,
+    scopes: Vec<Vec<(ExprData, Option<Value>)>>,
 }
 
-impl EquivalentClass {
-    /// init the equivalent class with only one member(itself)
-    fn new(value: Value) -> Self {
-        let values = FxHashSet::from_iter([value]);
-        Self { members: values, leader: value }
+impl ScopedExprTable {
+    fn new() -> Self {
+        Self { table: FxHashMap::default(), scopes: Vec::new() }
     }
 
-    /// add a new value to the dominance class, returns the new leader
-    fn insert(&mut self, value: Value, data: &FunctionData, dom_tree: &DomTree<BasicBlock>) {
-        if self.members.contains(&value) {
-            return;
-        }
+    fn enter_scope(&mut self) {
+        self.scopes.push(Vec::new());
+    }
 
-        self.members.insert(value);
-        let orig_leader_bb = data.layout().parent_bb(self.leader);
-        let new_leader_bb = data.layout().parent_bb(value);
-
-        if let (Some(old), Some(new)) = (orig_leader_bb, new_leader_bb) {
-            // new value's BB must strictly old's
-            // so we could keep the leader unchanged if the two BB is the same
-            if dom_tree.strict_dominates(new, old) {
-                self.leader = value;
+    fn leave_scope(&mut self) {
+        if let Some(scope_ops) = self.scopes.pop() {
+            for (expr, old_val) in scope_ops.into_iter().rev() {
+                if let Some(val) = old_val {
+                    self.table.insert(expr, val);
+                } else {
+                    self.table.remove(&expr);
+                }
             }
         }
     }
-}
 
-struct ExprTable {
-    /// from expr to the equivalent class id
-    exprs: FxHashMap<ExprData, EqClassId>,
+    fn lookup(&self, expr: &ExprData) -> Option<Value> {
+        self.table.get(expr).copied()
+    }
 
-    value_to_eclass: FxHashMap<Value, EqClassId>,
-
-    /// from equivalent class id to its actual data
-    equivalent_classes: FxHashMap<EqClassId, EquivalentClass>,
-
-    /// next equivalent class id
-    next_id: u32,
-}
-
-impl ExprTable {
-    fn new() -> Self {
-        Self {
-            exprs: FxHashMap::default(),
-            value_to_eclass: FxHashMap::default(),
-            equivalent_classes: FxHashMap::default(),
-            next_id: 0,
+    fn insert(&mut self, expr: ExprData, val: Value) {
+        let old_val = self.table.insert(expr.clone(), val);
+        if let Some(current_scope) = self.scopes.last_mut() {
+            current_scope.push((expr, old_val));
         }
-    }
-
-    fn next_id(&mut self) -> EqClassId {
-        let id = self.next_id;
-        self.next_id += 1;
-        EqClassId(id)
-    }
-
-    fn get_or_create_id(&mut self, val: Value) -> EqClassId {
-        if let Some(&id) = self.value_to_eclass.get(&val) {
-            id
-        } else {
-            let id = self.next_id();
-            self.value_to_eclass.insert(val, id);
-            self.equivalent_classes.insert(id, EquivalentClass::new(val));
-            id
-        }
-    }
-
-    fn process_instruction(
-        &mut self,
-        inst: Value,
-        data: &FunctionData,
-        dom_tree: &DomTree<BasicBlock>,
-    ) {
-        let inst_data = data.dfg().value(inst);
-        if !matches!(inst_data.kind(), ValueKind::Binary(_)) {
-            return;
-        }
-
-        let operands: SmallVec<[EqClassId; 3]> =
-            inst_data.kind().value_uses().map(|v| self.get_or_create_id(v)).collect();
-
-        let op = match inst_data.kind() {
-            ValueKind::Binary(b) => ExprOp::Bin(b.op()),
-            _ => unreachable!(),
-        };
-
-        let mut expr = ExprData { operands, op };
-        expr.canonicalize();
-
-        let class_id = if let Some(&existing_id) = self.exprs.get(&expr) {
-            let eclass = self.equivalent_classes.get_mut(&existing_id).unwrap();
-            eclass.insert(inst, data, dom_tree);
-            existing_id
-        } else {
-            let new_id = self.next_id();
-            self.exprs.insert(expr, new_id);
-            self.equivalent_classes.insert(new_id, EquivalentClass::new(inst));
-            new_id
-        };
-
-        self.value_to_eclass.insert(inst, class_id);
-    }
-
-    fn leader(&self, value: Value) -> Option<Value> {
-        let eclass_id = self.value_to_eclass.get(&value)?;
-        let eclass = self.equivalent_classes.get(eclass_id)?;
-        Some(eclass.leader)
     }
 }
 
 pub struct GVN;
 
-/// TODO: fold block params
 impl FunctionPass for GVN {
     fn run_on(&mut self, _func: koopa::ir::Function, data: &mut FunctionData) {
         let Some(entry) = data.layout().entry_bb() else {
@@ -178,30 +97,85 @@ impl FunctionPass for GVN {
 
         let dom_tree = DomTree::build(entry, data);
 
-        let mut expr_table = ExprTable::new();
+        let mut dom_children: FxHashMap<BasicBlock, Vec<BasicBlock>> = FxHashMap::default();
+        for &bb in data.layout().bbs().keys() {
+            if bb != entry {
+                if let Some(idom) = dom_tree.idom(bb) {
+                    dom_children.entry(idom).or_default().push(bb);
+                }
+            }
+        }
 
-        let rpo: Vec<BasicBlock> = reverse_post_order(data, entry);
+        let mut scoped_table = ScopedExprTable::new();
+        let mut leader_map: FxHashMap<Value, Value> = FxHashMap::default();
+        let mut replacements: Vec<(Value, Value)> = Vec::new();
 
-        for bb in &rpo {
-            let insts =
-                data.layout().bbs().node(bb).unwrap().insts().keys().copied().collect::<Vec<_>>();
+        visit_dom_tree(
+            entry,
+            data,
+            &mut scoped_table,
+            &mut leader_map,
+            &mut replacements,
+            &dom_children,
+        );
 
-            for inst in insts {
-                expr_table.process_instruction(inst, data, &dom_tree);
-
-                if let Some(leader) = expr_table.leader(inst)
-                    && inst != leader
-                {
-                    let v_map = FxHashMap::from_iter([(inst, leader)]);
-                    for usage in data.dfg().value(inst).used_by().clone() {
-                        let mut value_kind = data.dfg().value(usage).clone();
-                        assert!(replace_operands(&mut value_kind, &v_map));
-                        data.dfg_mut().replace_value_with(usage).raw(value_kind);
-                    }
+        for (inst, leader) in replacements {
+            let v_map = FxHashMap::from_iter([(inst, leader)]);
+            for usage in data.dfg().value(inst).used_by().clone() {
+                let mut value_kind = data.dfg().value(usage).clone();
+                if replace_operands(&mut value_kind, &v_map) {
+                    data.dfg_mut().replace_value_with(usage).raw(value_kind);
                 }
             }
         }
     }
+}
+
+fn visit_dom_tree(
+    bb: BasicBlock,
+    data: &FunctionData,
+    scoped_table: &mut ScopedExprTable,
+    leader_map: &mut FxHashMap<Value, Value>,
+    replacements: &mut Vec<(Value, Value)>,
+    dom_children: &FxHashMap<BasicBlock, Vec<BasicBlock>>,
+) {
+    scoped_table.enter_scope();
+
+    let insts: Vec<Value> =
+        data.layout().bbs().node(&bb).unwrap().insts().keys().copied().collect();
+
+    for inst in insts {
+        let inst_data = data.dfg().value(inst);
+
+        if let ValueKind::Binary(bin) = inst_data.kind() {
+            let operands = inst_data
+                .kind()
+                .value_uses()
+                .map(|use_val| leader_map.get(&use_val).copied().unwrap_or(use_val))
+                .collect();
+
+            let mut expr = ExprData { op: ExprOp::Bin(bin.op()), operands };
+            expr.canonicalize();
+
+            if let Some(leader) = scoped_table.lookup(&expr) {
+                leader_map.insert(inst, leader);
+                replacements.push((inst, leader));
+            } else {
+                leader_map.insert(inst, inst);
+                scoped_table.insert(expr, inst);
+            }
+        } else {
+            leader_map.insert(inst, inst);
+        }
+    }
+
+    if let Some(children) = dom_children.get(&bb) {
+        for &child in children {
+            visit_dom_tree(child, data, scoped_table, leader_map, replacements, dom_children);
+        }
+    }
+
+    scoped_table.leave_scope();
 }
 
 #[cfg(test)]
