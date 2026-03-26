@@ -120,12 +120,19 @@ impl FunctionPass for LoopUnRoll {
 
                         let (jmp, jmp_data) = data.terminator_raw(prev_latch);
                         let args = match jmp_data.kind() {
-                            ValueKind::Jump(jump) => jump.args(),
+                            ValueKind::Jump(jump) => jump.args().to_vec(),
+                            ValueKind::Branch(branch) => {
+                                if branch.true_bb() == header {
+                                    branch.true_args().to_vec()
+                                } else if branch.false_bb() == header {
+                                    branch.false_args().to_vec()
+                                } else {
+                                    unreachable!()
+                                }
+                            }
                             _ => unreachable!(),
                         };
-                        data.dfg_mut()
-                            .replace_value_with(jmp)
-                            .jump_with_args(current_header, args.to_vec());
+                        data.dfg_mut().replace_value_with(jmp).jump_with_args(current_header, args);
 
                         // the original terminator looks like: `br %cond, %next, %exit`
                         //  1. for the first cnt-1 unroll, we need to turn it into `jump %next`
@@ -216,7 +223,13 @@ impl LoopUnRoll {
         }
 
         // extra restrictions
-        if !matches!(data.terminator_raw(loops.latches(data, lp)[0]).1.kind(), ValueKind::Jump(_)) {
+        let latch_terminator = data.terminator_raw(loops.latches(data, lp)[0]).1;
+        if !matches!(latch_terminator.kind(), ValueKind::Jump(_) | ValueKind::Branch(_)) {
+            return UnrollVerdict::Not;
+        }
+
+        // the loop's latch must not be the header itself
+        if loops.latches(data, lp)[0] == loops.loops()[&lp].header() {
             return UnrollVerdict::Not;
         }
 
@@ -312,25 +325,14 @@ mod tests {
         let ir = r#"
 fun @test(): i32 {
 %entry:
-  jump %cond(0, 0)
+  jump %while_entry(0)
 
-%cond(%0: i32, %1: i32):
-  %2 = lt %0, 5
-  br %2, %body, %dedicate_exit(%1)
+%while_entry(%0: i32):
+  %1 = lt %0, 10
+  br %1, %while_entry(20), %while_end
 
-%body:
-  %5 = add %1, %0
-  %6 = add %0, 1
-  jump %foo1
-
-%foo1:
-  jump %cond(%6, %5)
-
-%foo2(%8: i32):
-  ret %8
-
-%dedicate_exit(%10: i32):
-  jump %foo2(%10)
+%while_end:
+  ret %0
 }
 "#;
         apply_pass(ir, true);
