@@ -18,21 +18,20 @@ impl FunctionPass for Mem2reg {
 
 struct SSAConstructor<'a> {
     data: &'a mut FunctionData,
+    /// from alloc to the actual value
     var_defs: FxHashMap<(BasicBlock, Value), Value>,
     incomplete_phis: FxHashMap<BasicBlock, FxHashMap<Value, Value>>,
+    /// seal: all preds has been filled/handled
     sealed_blocks: FxHashSet<BasicBlock>,
     preds: FxHashMap<BasicBlock, SmallVec<[BasicBlock; 2]>>,
     succs: FxHashMap<BasicBlock, SmallVec<[BasicBlock; 2]>>,
+    /// promotable allocs' actual type
     var_types: FxHashMap<Value, Type>,
     phi_operands: FxHashMap<Value, Vec<(BasicBlock, Value)>>,
     phi_vars: FxHashMap<Value, Value>,
     phi_block: FxHashMap<Value, BasicBlock>,
-
-    // 修复点：记录每个 Block 中存活的 (变量, 假Phi)
     bb_phi_vars: FxHashMap<BasicBlock, Vec<(Value, Value)>>,
-    // 修复点：手动维护假 Phi 的 Use-Def 链，Koopa IR 看不到未插入的 Undef
     phi_users: FxHashMap<Value, FxHashSet<Value>>,
-    // 修复点：记录被消除的假 Phi 指向的最终值（类似并查集）
     replaced_phis: FxHashMap<Value, Value>,
 }
 
@@ -60,7 +59,7 @@ impl<'a> SSAConstructor<'a> {
             return;
         };
 
-        // 1. 寻找可提升的 Alloc
+        // find all promotable allocs
         let mut promotable = FxHashSet::default();
         for inst in self.data.insts(entry_bb) {
             if let ValueKind::Alloc(_) = self.data.dfg().value(inst).kind() {
@@ -91,7 +90,7 @@ impl<'a> SSAConstructor<'a> {
             return;
         }
 
-        // 2. 计算 CFG
+        // build the cfg for convenience of rust's ownership
         for &bb in self.data.layout().bbs().keys() {
             self.succs.entry(bb).or_default().extend(self.data.succs(bb));
             self.preds.entry(bb).or_default().extend(self.data.preds(bb));
@@ -100,7 +99,6 @@ impl<'a> SSAConstructor<'a> {
         let blocks = crate::graph::traverse::reverse_post_order(&*self.data, entry_bb);
         let mut visited = FxHashSet::default();
 
-        // 3. 为入口赋予初值 Undef
         for &var in &promotable {
             let ty = self.var_types[&var].clone();
             let undef = self.data.dfg_mut().new_value().undef(ty);
@@ -110,7 +108,7 @@ impl<'a> SSAConstructor<'a> {
         let mut loads_to_replace = Vec::new();
         let mut stores_to_remove = Vec::new();
 
-        // 4. 遍历处理 Basic Blocks
+        // 4. handle each store & load
         for block in blocks {
             if !self.sealed_blocks.contains(&block) {
                 let preds = self.preds.get(&block).map(|v| v.as_slice()).unwrap_or_default();
@@ -156,14 +154,20 @@ impl<'a> SSAConstructor<'a> {
             }
         }
 
-        // 5. 实例化真正的 Block Parameters (Phi)
         let fake_to_real_phi = self.rebuild_bb_params();
         self.rebuild_terminators(&fake_to_real_phi);
 
-        // 6. 替换所有的 Loads
+        // clear load, store and alloc
         let mut load_replacements = FxHashMap::default();
         for (block, load, val) in loads_to_replace {
             let mut resolved_val = val;
+            // for cases like:
+            //   %1 = load %a
+            //   store %1, %b
+            //   %2 = load %b
+            // %1 might be removed when we are processing %2
+            // because the value of %1 is used in `store` instruction rather than
+            // the load, so the `replace_all_uses_with` won't fix it
             while let Some(&v) = load_replacements.get(&resolved_val) {
                 resolved_val = v;
             }
@@ -174,7 +178,6 @@ impl<'a> SSAConstructor<'a> {
             crate::utils::safely_remove_inst_from_dfg(self.data.dfg_mut(), load);
         }
 
-        // 7. 清理 Stores 和 Allocs
         for (block, store) in stores_to_remove {
             self.data.layout_mut().bb_mut(block).insts_mut().remove(&store);
             crate::utils::safely_remove_inst_from_dfg(self.data.dfg_mut(), store);
@@ -193,7 +196,6 @@ impl<'a> SSAConstructor<'a> {
         val
     }
 
-    // 修复点：获取最终真正的 Value (转换为 Real Phi)
     fn final_resolve(&self, val: Value, fake_to_real: &FxHashMap<Value, Value>) -> Value {
         let resolved_fake = self.resolve(val);
         *fake_to_real.get(&resolved_fake).unwrap_or(&resolved_fake)
@@ -247,7 +249,6 @@ impl<'a> SSAConstructor<'a> {
         for pred in preds {
             let val = self.read_variable(variable, pred);
             operands.push((pred, val));
-            // 修复点：记录谁被这个 Phi 使用了
             self.phi_users.entry(val).or_default().insert(phi);
         }
         self.phi_operands.insert(phi, operands);
@@ -267,12 +268,12 @@ impl<'a> SSAConstructor<'a> {
         let ops = self.phi_operands.get(&phi).cloned().unwrap_or_default();
         let mut same: Option<Value> = None;
         for &(_, mut op) in &ops {
-            op = self.resolve(op); // 确保读取最新的值
+            op = self.resolve(op);
             if op == phi || Some(op) == same {
                 continue;
             }
             if same.is_some() {
-                return phi; // 不平凡
+                return phi;
             }
             same = Some(op);
         }
@@ -283,10 +284,8 @@ impl<'a> SSAConstructor<'a> {
             self.data.dfg_mut().new_value().undef(ty)
         });
 
-        // 修复点：在并查集中记录替换路径
         let old = self.replaced_phis.insert(phi, same_val);
 
-        // 修复点：清理 bb_phi_vars，防止生成僵尸参数
         if let Some(block) = self.phi_block.get(&phi).copied() {
             if let Some(vars) = self.bb_phi_vars.get_mut(&block) {
                 vars.retain(|&(_, p)| p != phi);
@@ -294,7 +293,6 @@ impl<'a> SSAConstructor<'a> {
         }
 
         if old != Some(same_val) {
-            // 递归检查它的使用者是否因此变得平凡
             let users = self.phi_users.get(&phi).cloned().unwrap_or_default();
             for u in users {
                 if u != phi {
