@@ -27,6 +27,11 @@ impl FunctionPass for LICM {
 
         let mut loop_to_bb = loops.loop_to_bb();
         for lp in loops.bottom_up() {
+            // there must exist an unique preheader
+            let Some(preheader) = loops.preheader(data, lp) else {
+                continue;
+            };
+
             // for each lp, we should create a new map recording the invariants
             let mut is_invariants: FxHashMap<Value, bool> = FxHashMap::default();
             // the basic block in the loop, we sort it by RPO
@@ -34,7 +39,6 @@ impl FunctionPass for LICM {
             lp_basic_blocks.sort_by(|a, b| bb_to_rpo_num[a].cmp(&bb_to_rpo_num[b]));
 
             for bb in lp_basic_blocks {
-                let lp = loops.bb_to_loop()[&bb];
                 // the invariant instruction will be executed outside of the loop
                 // we should only hoist instruction that has no side effect
                 let bb_dominate_exits =
@@ -104,10 +108,6 @@ impl FunctionPass for LICM {
                         to_hoist.push(inst);
                     }
                 }
-
-                // suppose prehead does exist and don't have to bother with creating new preheader
-                // TODO: run loop simplify pass before LICM
-                let preheader = loops.preheader(data, lp).unwrap();
 
                 for inst in to_hoist {
                     data.layout_mut().bb_mut(bb).insts_mut().remove(&inst);
