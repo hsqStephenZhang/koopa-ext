@@ -20,18 +20,29 @@ struct SSAConstructor<'a> {
     data: &'a mut FunctionData,
     /// from alloc to the actual value
     var_defs: FxHashMap<(BasicBlock, Value), Value>,
+    /// basic block to unfinished phi nodes
     incomplete_phis: FxHashMap<BasicBlock, FxHashMap<Value, Value>>,
-    /// seal: all preds has been filled/handled
+    /// seal: all preds has been filled/visited
     sealed_blocks: FxHashSet<BasicBlock>,
+    /// for convenience
     preds: FxHashMap<BasicBlock, SmallVec<[BasicBlock; 2]>>,
     succs: FxHashMap<BasicBlock, SmallVec<[BasicBlock; 2]>>,
     /// promotable allocs' actual type
     var_types: FxHashMap<Value, Type>,
+    /// phi node to incoming BB && Value
     phi_operands: FxHashMap<Value, Vec<(BasicBlock, Value)>>,
+    /// phi node to its `alloc`
     phi_vars: FxHashMap<Value, Value>,
+    /// phi node to the BB it resides in
     phi_block: FxHashMap<Value, BasicBlock>,
+    /// BB to (alloc, phi node), which will later be used
+    /// to create block params
     bb_phi_vars: FxHashMap<BasicBlock, Vec<(Value, Value)>>,
+    /// mannual def-use for the phi
     phi_users: FxHashMap<Value, FxHashSet<Value>>,
+    /// koopa use block param instead of phi
+    /// we have to use `undef` as placeholder
+    /// and replace it with the real block param later
     replaced_phis: FxHashMap<Value, Value>,
 }
 
@@ -189,18 +200,6 @@ impl<'a> SSAConstructor<'a> {
         }
     }
 
-    fn resolve(&self, mut val: Value) -> Value {
-        while let Some(&replacement) = self.replaced_phis.get(&val) {
-            val = replacement;
-        }
-        val
-    }
-
-    fn final_resolve(&self, val: Value, fake_to_real: &FxHashMap<Value, Value>) -> Value {
-        let resolved_fake = self.resolve(val);
-        *fake_to_real.get(&resolved_fake).unwrap_or(&resolved_fake)
-    }
-
     fn write_variable(&mut self, variable: Value, block: BasicBlock, value: Value) {
         self.var_defs.insert((block, variable), value);
     }
@@ -304,6 +303,19 @@ impl<'a> SSAConstructor<'a> {
         same_val
     }
 
+    fn resolve(&self, mut val: Value) -> Value {
+        while let Some(&replacement) = self.replaced_phis.get(&val) {
+            val = replacement;
+        }
+        val
+    }
+
+    fn final_resolve(&self, val: Value, fake_to_real: &FxHashMap<Value, Value>) -> Value {
+        let resolved_fake = self.resolve(val);
+        *fake_to_real.get(&resolved_fake).unwrap_or(&resolved_fake)
+    }
+
+    // replace the fake phi with actual bb param
     fn rebuild_bb_params(&mut self) -> FxHashMap<Value, Value> {
         let mut fake_to_real = FxHashMap::default();
         for (&bb, variables) in &self.bb_phi_vars {
@@ -316,6 +328,8 @@ impl<'a> SSAConstructor<'a> {
         fake_to_real
     }
 
+    // fix the terminator to fit the latest bb params
+    // since we had updated in `rebuild_bb_params`
     fn rebuild_terminators(&mut self, fake_to_real: &FxHashMap<Value, Value>) {
         let blocks = self.data.layout().bbs().keys().copied().collect::<Vec<_>>();
 
