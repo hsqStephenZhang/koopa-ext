@@ -101,17 +101,17 @@ impl SCCP {
                             BinaryOp::Lt => Some((l < r) as i32),
                             BinaryOp::Ge => Some((l >= r) as i32),
                             BinaryOp::Le => Some((l <= r) as i32),
-                            BinaryOp::Add => Some(l + r),
-                            BinaryOp::Sub => Some(l - r),
-                            BinaryOp::Mul => Some(l * r),
+                            BinaryOp::Add => Some(l.wrapping_add(r)),
+                            BinaryOp::Sub => Some(l.wrapping_sub(r)),
+                            BinaryOp::Mul => Some(l.wrapping_mul(r)),
                             BinaryOp::Div => (r != 0).then(|| l / r),
                             BinaryOp::Mod => (r != 0).then(|| l % r),
                             BinaryOp::And => Some(l & r),
                             BinaryOp::Or => Some(l | r),
                             BinaryOp::Xor => Some(l ^ r),
-                            BinaryOp::Shl => Some(l << r),
-                            BinaryOp::Shr => Some((l as u32 >> r) as i32),
-                            BinaryOp::Sar => Some(l >> r),
+                            BinaryOp::Shl => Some(l.wrapping_shl(r as u32)),
+                            BinaryOp::Shr => Some((l as u32).wrapping_shr(r as u32) as i32),
+                            BinaryOp::Sar => Some(l.wrapping_shr(r as u32)),
                         };
                         // will panic on UB(div/mod by 0)
                         FlattenValue::Concrete(res.unwrap())
