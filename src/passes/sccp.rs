@@ -113,8 +113,11 @@ impl SCCP {
                             BinaryOp::Shr => Some((l as u32).wrapping_shr(r as u32) as i32),
                             BinaryOp::Sar => Some(l.wrapping_shr(r as u32)),
                         };
-                        // will panic on UB(div/mod by 0)
-                        FlattenValue::Concrete(res.unwrap())
+                        // div/mod by zero returns None (UB); treat as Bottom (non-constant)
+                        match res {
+                            Some(v) => FlattenValue::Concrete(v),
+                            None => FlattenValue::Bottom,
+                        }
                     }
                     (FlattenValue::Bottom, _) | (_, FlattenValue::Bottom) => FlattenValue::Bottom,
                     _ => FlattenValue::Top,

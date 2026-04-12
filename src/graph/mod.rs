@@ -22,11 +22,11 @@ impl DirectedGraph for koopa::ir::FunctionData {
     type Node = BasicBlock;
 
     fn num_nodes(&self) -> usize {
-        self.dfg().bbs().len()
+        self.layout().bbs().len()
     }
 
     fn nodes_iter(&self) -> impl Iterator<Item = Self::Node> {
-        self.dfg().bbs().keys().cloned()
+        self.layout().bbs().keys().cloned()
     }
 }
 
